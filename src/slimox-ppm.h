@@ -64,8 +64,8 @@ typedef struct symbol_t {
 } __attribute__((__packed__)) symbol_t;
 
 typedef struct o4_context_t {
-    struct o4_context_t* m_next;
     struct symbol_t*     m_symbols;
+    struct o4_context_t* m_next;
     uint32_t m_context;
     uint16_t m_sum;
     uint8_t  m_cnt;
@@ -339,6 +339,8 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
     int i;
 
     if(model->m_o4_counts >= 1048576 || model->m_symbol_counts >= 16777216) { /* too many o4-context/symbol nodes */
+        model->m_symbol_counts = 0;
+        model->m_o2_counts = 0;
         for(i = 0; i < 262144; i++) {
             while(model->m_o4_buckets[i] && model->m_o4_buckets[i]->m_visited / 2 == 0) {
                 o4 = model->m_o4_buckets[i];
@@ -347,7 +349,6 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
                     symbol = o4->m_symbols;
                     o4->m_symbols = o4->m_symbols->m_next;
                     allocator_free(model->m_symbol_allocator, symbol);
-                    model->m_symbol_counts -= 1;
                 }
                 allocator_free(model->m_o4_allocator, o4);
                 model->m_o4_counts -= 1;
@@ -359,12 +360,13 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
                         symbol = o4->m_symbols;
                         o4->m_symbols = o4->m_symbols->m_next;
                         allocator_free(model->m_symbol_allocator, symbol);
-                        model->m_symbol_counts -= 1;
                     }
                     allocator_free(model->m_o4_allocator, o4);
                     model->m_o4_counts -= 1;
                     o4 = o4_prev;
                 } else {
+                    model->m_o4_counts += 1;
+                    model->m_symbol_counts += o4->m_cnt;
                     o4_prev = o4;
                 }
             }
@@ -537,6 +539,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
 
     if(o4->m_symbols->m_frq > 250 || o4->m_sum > 32000) { /* rescale */
         o4_sym_node = o4->m_symbols;
+        model->m_symbol_counts -= o4->m_cnt;
         o4->m_sum = 0;
         o4->m_cnt = 0;
         while(o4_sym_node != NULL) { /* halves frequency of all symbols */
@@ -549,6 +552,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
                 o4->m_cnt += 1;
                 o4_sym_prev = o4_sym_node;
                 o4_sym_node = o4_sym_node->m_next;
+                model->m_symbol_counts += 1;
             }
         }
     }
