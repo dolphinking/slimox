@@ -243,8 +243,8 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
                 __ex_set(__o2->m_sym[__i]);                                 \
             }                                                               \
         }                                                                   \
-        swap(__o2->m_frq[__o2->m_cnt], __o2->m_frq[0]);                     \
-        swap(__o2->m_sym[__o2->m_cnt], __o2->m_sym[0]);                     \
+        __o2->m_frq[__o2->m_cnt] = __o2->m_frq[0];                          \
+        __o2->m_sym[__o2->m_cnt] = __o2->m_sym[0];                          \
         __o2->m_sym[0] = __c;                                               \
         __o2->m_frq[0] = 0;                                                 \
         __o2->m_cnt += 1;                                                   \
@@ -279,8 +279,8 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
         for(__i = 0; __i < __o2->m_cnt; __i++) { /* exclude */              \
             __ex_set(__o2->m_sym[__i]);                                     \
         }                                                                   \
-        swap(__o2->m_frq[__o2->m_cnt], __o2->m_frq[0]);                     \
-        swap(__o2->m_sym[__o2->m_cnt], __o2->m_sym[0]);                     \
+        __o2->m_frq[__o2->m_cnt] = __o2->m_frq[0];                          \
+        __o2->m_sym[__o2->m_cnt] = __o2->m_sym[0];                          \
         __o2->m_frq[0] = 0;                                                 \
         __o2->m_cnt += 1;                                                   \
         __cumx = __sumx - __escx;                                           \
