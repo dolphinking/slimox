@@ -48,12 +48,14 @@ typedef struct see_model_t {
     uint16_t m_c[2];
 } see_model_t;
 
+#define __context_sym(x, i) ((x)->m_symbols[i][0])
+#define __context_frq(x, i) ((x)->m_symbols[i][1])
+
 /* o2-structure types */
 typedef struct o2_context_t {
-    uint8_t  m_sym[256];
-    uint8_t  m_frq[256];
     uint16_t m_sum;
     uint16_t m_cnt;
+    uint8_t  m_symbols[256][2];
 } o2_context_t;
 
 /* o4-structure types */
@@ -220,33 +222,33 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     uint16_t __frqx = 0;                                                    \
     uint16_t __sumx = 0;                                                    \
     uint16_t __escx = 0;                                                    \
-    uint16_t __recent_frq = __o2->m_frq[0] & -!__ex_get(__o2->m_sym[0]);    \
+    uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0));    \
     for(__i = 0; __i < __o2->m_cnt; __i++) {                                \
-        __cumx += __o2->m_frq[__i] & -(!__ex_get(__o2->m_sym[__i]) && !__found && __o2->m_sym[__i] != __c); \
-        __sumx += __o2->m_frq[__i] & -(!__ex_get(__o2->m_sym[__i]));        \
-        __escx += __o2->m_frq[__i] == 1;                                    \
-        if(__o2->m_sym[__i] == __c) {                                       \
+        __cumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i)) && !__found && __context_sym(o2, __i) != __c); \
+        __sumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i)));        \
+        __escx += __context_frq(o2, __i) == 1;                                    \
+        if(__context_sym(o2, __i) == __c) {                                       \
             __found_index = __i;                                            \
             __found = 1;                                                    \
-            swap(__o2->m_frq[__i], __o2->m_frq[0]);                         \
-            swap(__o2->m_sym[__i], __o2->m_sym[0]);                         \
+            swap(__context_frq(o2, __i), __context_frq(o2, 0));                         \
+            swap(__context_sym(o2, __i), __context_sym(o2, 0));                         \
         }                                                                   \
     }                                                                       \
-    __frqx = __o2->m_frq[0] + (__recent_frq & -(__found_index == 0));       \
+    __frqx = __context_frq(o2, 0) + (__recent_frq & -(__found_index == 0));       \
     __cumx += __recent_frq & -(__found_index > 0);                          \
     __escx += !__escx;                                                      \
     __sumx += __recent_frq + __escx;                                        \
     if(!__found) {                                                          \
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o2->m_cnt; __i++) { /* exclude */              \
-            if(__o2->m_frq[__i] != 0) {                                     \
-                __ex_set(__o2->m_sym[__i]);                                 \
+            if(__context_frq(o2, __i) != 0) {                                     \
+                __ex_set(__context_sym(o2, __i));                                 \
             }                                                               \
         }                                                                   \
-        __o2->m_frq[__o2->m_cnt] = __o2->m_frq[0];                          \
-        __o2->m_sym[__o2->m_cnt] = __o2->m_sym[0];                          \
-        __o2->m_sym[0] = __c;                                               \
-        __o2->m_frq[0] = 0;                                                 \
+        __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);                          \
+        __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);                          \
+        __context_sym(o2, 0) = __c;                                               \
+        __context_frq(o2, 0) = 0;                                                 \
         __o2->m_cnt += 1;                                                   \
         __cumx = __sumx - __escx;                                           \
         __frqx = __escx;                                                    \
@@ -266,10 +268,10 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     uint16_t __frqx = 0;                                                    \
     uint16_t __sumx = 0;                                                    \
     uint16_t __escx = 0;                                                    \
-    uint16_t __recent_frq = __o2->m_frq[0] & -!__ex_get(__o2->m_sym[0]);    \
+    uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0));    \
     for(__i = 0; __i < __o2->m_cnt; __i++) {                                \
-        __sumx += __o2->m_frq[__i] & -!__ex_get(__o2->m_sym[__i]);          \
-        __escx += __o2->m_frq[__i] == 1;                                    \
+        __sumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i));          \
+        __escx += __context_frq(o2, __i) == 1;                                    \
     }                                                                       \
     __escx += !__escx;                                                      \
     __sumx += __recent_frq + __escx;                                        \
@@ -277,28 +279,28 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     if(__sumx - __escx <= __coder->m_decode_cum) {                          \
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o2->m_cnt; __i++) { /* exclude */              \
-            __ex_set(__o2->m_sym[__i]);                                     \
+            __ex_set(__context_sym(o2, __i));                                     \
         }                                                                   \
-        __o2->m_frq[__o2->m_cnt] = __o2->m_frq[0];                          \
-        __o2->m_sym[__o2->m_cnt] = __o2->m_sym[0];                          \
-        __o2->m_frq[0] = 0;                                                 \
+        __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);                          \
+        __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);                          \
+        __context_frq(o2, 0) = 0;                                                 \
         __o2->m_cnt += 1;                                                   \
         __cumx = __sumx - __escx;                                           \
         __frqx = __escx;                                                    \
     } else {                                                                \
         __escape[0] = 0;                                                    \
         __i = 0;                                                            \
-        while(__cumx + __recent_frq + (__o2->m_frq[__i] & -!__ex_get(__o2->m_sym[__i])) <= __coder->m_decode_cum) { \
-            __cumx += __o2->m_frq[__i] & -!__ex_get(__o2->m_sym[__i]);      \
+        while(__cumx + __recent_frq + (__context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i))) <= __coder->m_decode_cum) { \
+            __cumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i));      \
             __i++;                                                          \
         }                                                                   \
-        __frqx = __o2->m_frq[__i];                                          \
-        __c[0] = __o2->m_sym[__i];                                          \
+        __frqx = __context_frq(o2, __i);                                          \
+        __c[0] = __context_sym(o2, __i);                                          \
         if(__i == 0) {                                                      \
             __frqx += __recent_frq;                                         \
         } else {                                                            \
-            swap(__o2->m_frq[__i], __o2->m_frq[0]);                         \
-            swap(__o2->m_sym[__i], __o2->m_sym[0]);                         \
+            swap(__context_frq(o2, __i), __context_frq(o2, 0));                         \
+            swap(__context_sym(o2, __i), __context_sym(o2, 0));                         \
             __cumx += __recent_frq;                                         \
         }                                                                   \
     }                                                                       \
@@ -310,24 +312,23 @@ static inline void __o2_update(o2_context_t* o2, int c) {
     int i;
 
     o2->m_sum += 1;
-    o2->m_frq[0] += 1;
-    o2->m_sym[0] = c;
+    __context_frq(o2, 0) += 1;
+    __context_sym(o2, 0) = c;
 
-    if(o2->m_frq[0] > 250) { /* rescale */
+    if(__context_frq(o2, 0) > 250) { /* rescale */
         o2->m_cnt = 0;
         o2->m_sum = 0;
         for(i = 0; i + n < 256; i++) {
-            if((o2->m_frq[i] = o2->m_frq[i + n] / 2) > 0) {
-                o2->m_sym[i] = o2->m_sym[i + n];
+            if((__context_frq(o2, i) = __context_frq(o2, i + n) / 2) > 0) {
+                __context_sym(o2, i) = __context_sym(o2, i + n);
                 o2->m_cnt += 1;
-                o2->m_sum += o2->m_frq[i];
+                o2->m_sum += __context_frq(o2, i);
             } else {
                 n++;
                 i--;
             }
         }
-        memset(o2->m_sym + o2->m_cnt, 0, sizeof(o2->m_sym[0]) * (256 - o2->m_cnt));
-        memset(o2->m_frq + o2->m_cnt, 0, sizeof(o2->m_frq[0]) * (256 - o2->m_cnt));
+        memset(o2->m_symbols + o2->m_cnt, 0, sizeof(o2->m_symbols[0]) * (256 - o2->m_cnt));
     }
     return;
 }
@@ -518,8 +519,8 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
     o4->m_symbols->m_sym = c;
     if(o4->m_symbols->m_frq == 0) { /* calculate init frequency */
         for(i = 0; i < o2cnt; i++) {
-            if(o2->m_sym[i] == c) {
-                o2frq = o2->m_frq[i];
+            if(__context_sym(o2, i) == c) {
+                o2frq = __context_frq(o2, i);
                 break;
             }
         }
