@@ -146,12 +146,12 @@ static inline void ppm_model_del(ppm_model_t* model) {
     return;
 }
 
-#define __o4_hash(model) ((unsigned)((model)->m_context ^ (model)->m_context >> 14) % 262144)
-#define __o2(model)      ( (model)->m_o2[(model)->m_context & 0xffff])
-#define __o1(model)      (&(model)->m_o1[(model)->m_context & 0x00ff])
-#define __o0(model)      (&(model)->m_o0[0])
-#define __ex_get(n)      ((__exclude[(n) / 32] >> ((n) % 32)) & 0x01)
-#define __ex_set(n)      ((__exclude[(n) / 32] |= 0x01<< ((n) % 32)))
+#define __o4_hash(c)    ((unsigned)((c) ^ (c) >> 14) % 262144)
+#define __o2(model)     ( (model)->m_o2[(model)->m_context & 0xffff])
+#define __o1(model)     (&(model)->m_o1[(model)->m_context & 0x00ff])
+#define __o0(model)     (&(model)->m_o0[0])
+#define __ex_get(n)     ((__exclude[(n) / 32] >> ((n) % 32)) & 0x01)
+#define __ex_set(n)     ((__exclude[(n) / 32] |= 0x01<< ((n) % 32)))
 
 /* SEE model */
 static inline void __ppm_see_update(see_model_t* see, int c, int update) {
@@ -349,7 +349,7 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         }
     }
 
-    o4 = model->m_o4_buckets[__o4_hash(model)];
+    o4 = model->m_o4_buckets[__o4_hash(model->m_context)];
     o4_prev = NULL;
     while(o4 && o4->m_context != model->m_context) { /* search for o4 context */
         o4_prev = o4;
@@ -358,8 +358,8 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
     if(o4 != NULL) { /* found -- bring to front of linked-list */
         if(o4_prev != NULL) {
             o4_prev->m_next = o4->m_next;
-            o4->m_next = model->m_o4_buckets[__o4_hash(model)];
-            model->m_o4_buckets[__o4_hash(model)] = o4;
+            o4->m_next = model->m_o4_buckets[__o4_hash(model->m_context)];
+            model->m_o4_buckets[__o4_hash(model->m_context)] = o4;
         }
     } else { /* not found -- create new node for context */
         o4 = allocator_alloc(model->m_o4_allocator, sizeof(o4_context_t), 8192);
@@ -367,9 +367,9 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         o4->m_sum = 0;
         o4->m_cnt = 0;
         o4->m_visited = 0;
-        o4->m_next = model->m_o4_buckets[__o4_hash(model)];
+        o4->m_next = model->m_o4_buckets[__o4_hash(model->m_context)];
         model->m_o4_counts += 1;
-        model->m_o4_buckets[__o4_hash(model)] = o4;
+        model->m_o4_buckets[__o4_hash(model->m_context)] = o4;
     }
     o4->m_visited += (o4->m_visited < 255);
     return o4;
@@ -549,6 +549,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
         __model->m_o2_counts += 1;                                          \
         memset(__o2(__model), 0, sizeof(o2_context_t));                     \
     }                                                                       \
+    __builtin_prefetch(__model->m_o4_buckets + __o4_hash(model->m_context << 8 | __c), 1, 3); /* prefetch for next round */ \
     while(-1) {                                                             \
         __order = 4; __o4_encode(__model, __o4, __coder, __c, do_output, &__escape); if(!__escape) break; \
         __order = 2; __o2_encode(__o2(__model), __coder, __c, do_output, &__escape); if(!__escape) break; \
@@ -602,6 +603,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
         rc_decode(__coder, __cum, 1, do_input); __c[0] = __i;               \
         break;                                                              \
     }                                                                       \
+    __builtin_prefetch(__model->m_o4_buckets + __o4_hash(model->m_context << 8 | __c[0]), 1, 3); /* prefetch for next round */ \
     switch(__order) { /* fall-through switch */                             \
         case 0: __o2_update(__o0(__model), __c[0]);                         \
         case 1: __o2_update(__o1(__model), __c[0]);                         \
