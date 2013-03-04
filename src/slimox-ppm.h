@@ -62,12 +62,12 @@ typedef struct o2_context_t {
 /* o4-structure types */
 typedef struct o4_context_t {
     struct o4_context_t* m_next;
-    uint8_t  m_padding[8 - sizeof(size_t)]; /* make a 64-byte struct */
+    uint8_t  m_padding[8 - sizeof(size_t)]; /* make a 128-byte struct */
     uint32_t m_context;
     uint16_t m_sum;
     uint8_t  m_cnt;
     uint8_t  m_visited;
-    uint8_t  m_symbols[24][2];
+    uint8_t  m_symbols[66][2]; /* can store 66 symbols at most */
 } __attribute__((__packed__)) o4_context_t;
 
 /* main ppm-model type */
@@ -416,7 +416,7 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         for(__i = 0; __i < __o4->m_cnt; __i++) {                            \
             __ex_set(__context_sym(__o4, __i)); /* exclude o4 */            \
         }                                                                   \
-        if(__o4->m_cnt == 24) {                                             \
+        if(__o4->m_cnt == 66) {                                             \
             __o4->m_sum -= __context_frq(__o4, __o4->m_cnt - 1);            \
         } else {                                                            \
             __o4->m_cnt += 1;                                               \
@@ -447,7 +447,7 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         for(__i = 0; __i < __o4->m_cnt; __i++) {                            \
             __ex_set(__context_sym(__o4, __i)); /* exclude o4 */            \
         }                                                                   \
-        if(__o4->m_cnt == 24) {                                             \
+        if(__o4->m_cnt == 66) {                                             \
             __o4->m_sum -= __context_frq(__o4, __o4->m_cnt - 1);            \
         } else {                                                            \
             __o4->m_cnt += 1;                                               \
@@ -517,7 +517,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
     if(__context_frq(o4, 0) > 250) { /* rescale */
         o4->m_cnt = 0;
         o4->m_sum = 0;
-        for(i = 0; i + n < 24; i++) {
+        for(i = 0; i + n < 66; i++) {
             if((__context_frq(o4, i) = __context_frq(o4, i + n) / 2) > 0) {
                 __context_sym(o4, i) = __context_sym(o4, i + n);
                 o4->m_cnt += 1;
@@ -527,7 +527,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
                 i--;
             }
         }
-        memset(o4->m_symbols + o4->m_cnt, 0, sizeof(o4->m_symbols[0]) * (24 - o4->m_cnt));
+        memset(o4->m_symbols + o4->m_cnt, 0, sizeof(o4->m_symbols[0]) * (66 - o4->m_cnt));
     }
     return;
 }
