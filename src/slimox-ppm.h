@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 #include "slimox-alloc.h"
 #include "slimox-rc.h"
 
@@ -59,25 +60,19 @@ typedef struct o2_context_t {
 } o2_context_t;
 
 /* o4-structure types */
-typedef struct symbol_t {
-    struct symbol_t* m_next;
-    uint8_t m_sym;
-    uint8_t m_frq;
-} __attribute__((__packed__)) symbol_t;
-
 typedef struct o4_context_t {
-    struct symbol_t*     m_symbols;
     struct o4_context_t* m_next;
+    uint8_t  m_padding[8 - sizeof(size_t)]; /* make a 64-byte struct */
     uint32_t m_context;
     uint16_t m_sum;
     uint8_t  m_cnt;
     uint8_t  m_visited;
+    uint8_t  m_symbols[24][2];
 } __attribute__((__packed__)) o4_context_t;
 
 /* main ppm-model type */
 typedef struct ppm_model_t {
     uint32_t m_context;
-    uint32_t m_symbol_counts;
     uint32_t m_o2_counts;
     uint32_t m_o4_counts;
     struct o4_context_t* m_o4_buckets[262144];
@@ -86,7 +81,6 @@ typedef struct ppm_model_t {
     struct o2_context_t  m_o0[1];
     struct allocator_t*  m_o2_allocator;
     struct allocator_t*  m_o4_allocator;
-    struct allocator_t*  m_symbol_allocator;
     uint8_t m_sse_ch_context;
     uint8_t m_sse_last_esc;
     struct see_model_t m_binsee[65536];
@@ -118,18 +112,16 @@ static inline ppm_model_t* ppm_model_new() {
     };
     int context_hi;
     int context_lo;
-
     ppm_model_t* model = (ppm_model_t*)malloc(sizeof(ppm_model_t));
-    model->m_context = 0;
-    model->m_symbol_counts = 0;
+
     model->m_o2_counts = 0;
     model->m_o4_counts = 0;
+    model->m_context = 0;
     memset(model->m_o4_buckets, 0, sizeof(model->m_o4_buckets));
     memset(model->m_o2, 0, sizeof(model->m_o2));
     memset(model->m_o1, 0, sizeof(model->m_o1));
     memset(model->m_o0, 0, sizeof(model->m_o0));
     model->m_o4_allocator = allocator_new();
-    model->m_symbol_allocator = allocator_new();
     model->m_o2_allocator = allocator_new();
     model->m_sse_ch_context = 0;
     for(context_hi = 0; context_hi < 64; context_hi++) {
@@ -145,11 +137,10 @@ static inline ppm_model_t* ppm_model_new() {
     model->m_see_10.m_c[0] = 1;
     model->m_see_10.m_c[1] = 0;
     return model;
-};
+}
 
 static inline void ppm_model_del(ppm_model_t* model) {
     allocator_del(model->m_o4_allocator);
-    allocator_del(model->m_symbol_allocator);
     allocator_del(model->m_o2_allocator);
     free(model);
     return;
@@ -177,19 +168,18 @@ static inline int __fast_log2(uint32_t x) {
     return (31 - __builtin_clz((x << 1) | 0x01));
 }
 static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t* o4) {
-    int curcnt = o4->m_cnt + (256 & -(o4->m_cnt == 0 && o4->m_symbols != NULL));
+    int curcnt = o4->m_cnt;
     int lowsum = __o2(model)->m_sum;
     int lowcnt = __o2(model)->m_cnt;
     uint32_t context = 0;
 
-    if(curcnt == 256) return &model->m_see_10; /* all symbols appeared -- never esxape */
-    if(curcnt == 0)   return &model->m_see_01; /* no symbols nnder current context -- always escape */
+    if(curcnt == 0) return &model->m_see_01; /* no symbols nnder current context -- always escape */
     if(curcnt == 1) {
         /* QUANTIZE(binary) = (last_esc[1] | sum[3] | lowcnt[2] | lowsum[1] | bin_symbol[3] | previous symbols[6]) */
         context |= ((model->m_context >>  6) & 0x03);
         context |= ((model->m_context >> 14) & 0x03) << 2;
         context |= ((model->m_context >> 22) & 0x03) << 4;
-        context |= (o4->m_symbols->m_sym >> 6) << 6;
+        context |= (__context_sym(o4, 0) >> 6) << 6;
         context |= (lowsum >= 4) << 9;
         context |= min2(__fast_log2(lowcnt / 2), 3) << 10;
         context |= min2(__fast_log2(o4->m_sum / 3), 7) << 12;
@@ -222,33 +212,33 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     uint16_t __frqx = 0;                                                    \
     uint16_t __sumx = 0;                                                    \
     uint16_t __escx = 0;                                                    \
-    uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0));    \
+    uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0)); \
     for(__i = 0; __i < __o2->m_cnt; __i++) {                                \
         __cumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i)) && !__found && __context_sym(o2, __i) != __c); \
-        __sumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i)));        \
-        __escx += __context_frq(o2, __i) == 1;                                    \
-        if(__context_sym(o2, __i) == __c) {                                       \
+        __sumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i))); \
+        __escx += __context_frq(o2, __i) == 1;                              \
+        if(__context_sym(o2, __i) == __c) {                                 \
             __found_index = __i;                                            \
             __found = 1;                                                    \
-            swap(__context_frq(o2, __i), __context_frq(o2, 0));                         \
-            swap(__context_sym(o2, __i), __context_sym(o2, 0));                         \
+            swap(__context_frq(o2, __i), __context_frq(o2, 0));             \
+            swap(__context_sym(o2, __i), __context_sym(o2, 0));             \
         }                                                                   \
     }                                                                       \
-    __frqx = __context_frq(o2, 0) + (__recent_frq & -(__found_index == 0));       \
+    __frqx = __context_frq(o2, 0) + (__recent_frq & -(__found_index == 0)); \
     __cumx += __recent_frq & -(__found_index > 0);                          \
     __escx += !__escx;                                                      \
     __sumx += __recent_frq + __escx;                                        \
     if(!__found) {                                                          \
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o2->m_cnt; __i++) { /* exclude */              \
-            if(__context_frq(o2, __i) != 0) {                                     \
-                __ex_set(__context_sym(o2, __i));                                 \
+            if(__context_frq(o2, __i) != 0) {                               \
+                __ex_set(__context_sym(o2, __i));                           \
             }                                                               \
         }                                                                   \
-        __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);                          \
-        __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);                          \
-        __context_sym(o2, 0) = __c;                                               \
-        __context_frq(o2, 0) = 0;                                                 \
+        __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);              \
+        __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);              \
+        __context_sym(o2, 0) = __c;                                         \
+        __context_frq(o2, 0) = 0;                                           \
         __o2->m_cnt += 1;                                                   \
         __cumx = __sumx - __escx;                                           \
         __frqx = __escx;                                                    \
@@ -268,10 +258,10 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     uint16_t __frqx = 0;                                                    \
     uint16_t __sumx = 0;                                                    \
     uint16_t __escx = 0;                                                    \
-    uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0));    \
+    uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0)); \
     for(__i = 0; __i < __o2->m_cnt; __i++) {                                \
-        __sumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i));          \
-        __escx += __context_frq(o2, __i) == 1;                                    \
+        __sumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i)); \
+        __escx += __context_frq(o2, __i) == 1;                              \
     }                                                                       \
     __escx += !__escx;                                                      \
     __sumx += __recent_frq + __escx;                                        \
@@ -279,11 +269,11 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     if(__sumx - __escx <= __coder->m_decode_cum) {                          \
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o2->m_cnt; __i++) { /* exclude */              \
-            __ex_set(__context_sym(o2, __i));                                     \
+            __ex_set(__context_sym(o2, __i));                               \
         }                                                                   \
-        __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);                          \
-        __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);                          \
-        __context_frq(o2, 0) = 0;                                                 \
+        __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);              \
+        __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);              \
+        __context_frq(o2, 0) = 0;                                           \
         __o2->m_cnt += 1;                                                   \
         __cumx = __sumx - __escx;                                           \
         __frqx = __escx;                                                    \
@@ -291,16 +281,16 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
         __escape[0] = 0;                                                    \
         __i = 0;                                                            \
         while(__cumx + __recent_frq + (__context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i))) <= __coder->m_decode_cum) { \
-            __cumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i));      \
+            __cumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i)); \
             __i++;                                                          \
         }                                                                   \
-        __frqx = __context_frq(o2, __i);                                          \
-        __c[0] = __context_sym(o2, __i);                                          \
+        __frqx = __context_frq(o2, __i);                                    \
+        __c[0] = __context_sym(o2, __i);                                    \
         if(__i == 0) {                                                      \
             __frqx += __recent_frq;                                         \
         } else {                                                            \
-            swap(__context_frq(o2, __i), __context_frq(o2, 0));                         \
-            swap(__context_sym(o2, __i), __context_sym(o2, 0));                         \
+            swap(__context_frq(o2, __i), __context_frq(o2, 0));             \
+            swap(__context_sym(o2, __i), __context_sym(o2, 0));             \
             __cumx += __recent_frq;                                         \
         }                                                                   \
     }                                                                       \
@@ -336,38 +326,23 @@ static inline void __o2_update(o2_context_t* o2, int c) {
 static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
     o4_context_t* o4;
     o4_context_t* o4_prev;
-    symbol_t*     symbol;
     int i;
 
-    if(model->m_o4_counts >= 1048576 || model->m_symbol_counts >= 16777216) { /* too many o4-context/symbol nodes */
-        model->m_symbol_counts = 0;
-        model->m_o2_counts = 0;
+    if(model->m_o4_counts >= 1048576) { /* too many o4-context/symbol nodes */
+        model->m_o4_counts = 0;
         for(i = 0; i < 262144; i++) {
             while(model->m_o4_buckets[i] && model->m_o4_buckets[i]->m_visited / 2 == 0) {
                 o4 = model->m_o4_buckets[i];
                 model->m_o4_buckets[i] = model->m_o4_buckets[i]->m_next;
-                while(o4->m_symbols != NULL) { /* free symbols */
-                    symbol = o4->m_symbols;
-                    o4->m_symbols = o4->m_symbols->m_next;
-                    allocator_free(model->m_symbol_allocator, symbol);
-                }
                 allocator_free(model->m_o4_allocator, o4);
-                model->m_o4_counts -= 1;
             }
             for(o4 = model->m_o4_buckets[i]; o4 != NULL; o4 = o4->m_next) {
                 if((o4->m_visited /= 2) == 0) {
                     o4_prev->m_next = o4->m_next;
-                    while(o4->m_symbols != NULL) { /* free symbols */
-                        symbol = o4->m_symbols;
-                        o4->m_symbols = o4->m_symbols->m_next;
-                        allocator_free(model->m_symbol_allocator, symbol);
-                    }
                     allocator_free(model->m_o4_allocator, o4);
-                    model->m_o4_counts -= 1;
                     o4 = o4_prev;
                 } else {
                     model->m_o4_counts += 1;
-                    model->m_symbol_counts += o4->m_cnt;
                     o4_prev = o4;
                 }
             }
@@ -387,10 +362,8 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
             model->m_o4_buckets[__o4_hash(model)] = o4;
         }
     } else { /* not found -- create new node for context */
-        o4 = allocator_alloc(model->m_o4_allocator, sizeof(o4_context_t) + sizeof(symbol_t), 8192);
-        allocator_free(model->m_symbol_allocator, o4 + 1);
+        o4 = allocator_alloc(model->m_o4_allocator, sizeof(o4_context_t), 8192);
         o4->m_context = model->m_context;
-        o4->m_symbols = NULL;
         o4->m_sum = 0;
         o4->m_cnt = 0;
         o4->m_visited = 0;
@@ -408,31 +381,31 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
     __param(o4_context_t*, o4, __o4);                                       \
     __param(uint8_t, c, __c);                                               \
     __param(int*, escape, __escape);                                        \
-    symbol_t* __o4_sym_node = __o4->m_symbols;                              \
-    symbol_t* __o4_sym_prev = NULL;                                         \
     see_model_t* __see = __ppm_see_context_o4(__model, __o4);               \
+    uint8_t      __tmp_symbol[2];                                           \
     uint16_t     __cum = 0;                                                 \
     uint16_t     __frq = 0;                                                 \
     uint16_t     __recent_frq = 0;                                          \
-    while(__o4_sym_node != NULL && __o4_sym_node->m_sym != __c) { /* search for symbol */ \
-        __cum += __o4_sym_node->m_frq;                                      \
-        __o4_sym_prev = __o4_sym_node;                                      \
-        __o4_sym_node = __o4_sym_node->m_next;                              \
+    int          __i;                                                       \
+    for(__i = 0; __i < __o4->m_cnt && __context_sym(o4, __i) != __c; __i++) { /* search for symbol */ \
+        __cum += __context_frq(o4, __i);                                    \
     }                                                                       \
-    if(__o4_sym_node != NULL) { /* found -- bring to front of linked-list */\
+    if(__i < __o4->m_cnt) { /* found -- bring to front of linked-list */    \
         rc_encode(__coder, 0, __see->m_c[0], __see->m_c[0] + __see->m_c[1], do_output); \
         __ppm_see_update(__see, 0, 35);                                     \
         __escape[0] = 0;                                                    \
         if(__o4->m_cnt != 1) { /* no need to encode binary context */       \
-            __recent_frq = (__o4->m_symbols->m_frq + 6) / 2; /* recency scaling */ \
-            if(__o4_sym_node == __o4->m_symbols) {                          \
-                __frq = __o4_sym_node->m_frq + __recent_frq;                \
+            __recent_frq = (__context_frq(__o4, 0) + 6) / 2; /* recency scaling */ \
+            if(__i == 0) {                                                  \
+                __frq = __context_frq(__o4, __i) + __recent_frq;            \
             } else {                                                        \
-                __frq = __o4_sym_node->m_frq;                               \
+                __frq = __context_frq(__o4, __i);                           \
                 __cum += __recent_frq;                                      \
-                __o4_sym_prev->m_next = __o4_sym_node->m_next;              \
-                __o4_sym_node->m_next = __o4->m_symbols;                    \
-                __o4->m_symbols = __o4_sym_node;                            \
+                __tmp_symbol[0] = __context_sym(__o4, __i);                 \
+                __tmp_symbol[1] = __context_frq(__o4, __i);                 \
+                memmove(__o4->m_symbols + 1, __o4->m_symbols, sizeof(__o4->m_symbols[0]) * __i); \
+                __context_sym(__o4, 0) = __tmp_symbol[0];                   \
+                __context_frq(__o4, 0) = __tmp_symbol[1];                   \
             }                                                               \
             rc_encode(__coder, __cum, __frq, __o4->m_sum + __recent_frq, do_output); \
         }                                                                   \
@@ -440,16 +413,17 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         rc_encode(__coder, __see->m_c[0], __see->m_c[1], __see->m_c[0] + __see->m_c[1], do_output); \
         __ppm_see_update(__see, 1, 35);                                     \
         __escape[0] = 1;                                                    \
-        for(__o4_sym_prev = __o4->m_symbols; __o4_sym_prev != NULL; __o4_sym_prev = __o4_sym_prev->m_next) { \
-            __ex_set(__o4_sym_prev->m_sym); /* exclude o4 */                \
+        for(__i = 0; __i < __o4->m_cnt; __i++) {                            \
+            __ex_set(__context_sym(__o4, __i)); /* exclude o4 */            \
         }                                                                   \
-        __o4_sym_node = allocator_alloc(__model->m_symbol_allocator, sizeof(symbol_t), 8192); \
-        __o4_sym_node->m_sym = __c;                                         \
-        __o4_sym_node->m_frq = 0;                                           \
-        __o4_sym_node->m_next = __o4->m_symbols;                            \
-        __o4->m_symbols = __o4_sym_node;                                    \
-        __o4->m_cnt += 1;                                                   \
-        __model->m_symbol_counts += 1;                                      \
+        if(__o4->m_cnt == 24) {                                             \
+            __o4->m_sum -= __context_frq(__o4, __o4->m_cnt - 1);            \
+        } else {                                                            \
+            __o4->m_cnt += 1;                                               \
+        }                                                                   \
+        memmove(__o4->m_symbols + 1, __o4->m_symbols, sizeof(__o4->m_symbols[0]) * (__o4->m_cnt - 1)); \
+        __context_sym(__o4, 0) = __c;                                       \
+        __context_frq(__o4, 0) = 0;                                         \
     }                                                                       \
 }while(0)
 
@@ -459,65 +433,65 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
     __param(o4_context_t*, o4, __o4);                                       \
     __param(uint8_t*, c, __c);                                              \
     __param(int*, escape, __escape);                                        \
-    symbol_t* __o4_sym_node = __o4->m_symbols;                              \
-    symbol_t* __o4_sym_prev = NULL;                                         \
     see_model_t* __see = __ppm_see_context_o4(__model, __o4);               \
+    uint8_t      __tmp_symbol[2];                                           \
     uint16_t     __cum = 0;                                                 \
     uint16_t     __frq = 0;                                                 \
     uint16_t     __recent_frq = 0;                                          \
+    int          __i;                                                       \
     rc_decode_cum(__coder, __see->m_c[0] + __see->m_c[1]);                  \
     if(__see->m_c[0] <= __coder->m_decode_cum) {                            \
         rc_decode(__coder, __see->m_c[0], __see->m_c[1], do_input);         \
         __ppm_see_update(__see, 1, 35);                                     \
         __escape[0] = 1;                                                    \
-        for(__o4_sym_prev = __o4->m_symbols; __o4_sym_prev != NULL; __o4_sym_prev = __o4_sym_prev->m_next) { \
-            __ex_set(__o4_sym_prev->m_sym); /* exclude o4 */                \
+        for(__i = 0; __i < __o4->m_cnt; __i++) {                            \
+            __ex_set(__context_sym(__o4, __i)); /* exclude o4 */            \
         }                                                                   \
-        __o4_sym_node = allocator_alloc(__model->m_symbol_allocator, sizeof(symbol_t), 8192); \
-        __o4_sym_node->m_sym = 0; /* sym is unknown at the moment*/         \
-        __o4_sym_node->m_frq = 0;                                           \
-        __o4_sym_node->m_next = __o4->m_symbols;                            \
-        __o4->m_symbols = __o4_sym_node;                                    \
-        __o4->m_cnt += 1;                                                   \
-        __model->m_symbol_counts += 1;                                      \
+        if(__o4->m_cnt == 24) {                                             \
+            __o4->m_sum -= __context_frq(__o4, __o4->m_cnt - 1);            \
+        } else {                                                            \
+            __o4->m_cnt += 1;                                               \
+        }                                                                   \
+        memmove(__o4->m_symbols + 1, __o4->m_symbols, sizeof(__o4->m_symbols[0]) * (__o4->m_cnt - 1)); \
+        __context_frq(__o4, 0) = 0;                                         \
     } else { /* found */                                                    \
         rc_decode(__coder, 0, __see->m_c[0], do_input);                     \
         __ppm_see_update(__see, 0, 35);                                     \
         __escape[0] = 0;                                                    \
         if(__o4->m_cnt != 1) { /* no need to decode binary context */       \
-            __recent_frq = (__o4->m_symbols->m_frq + 6) / 2; /* recency scaling */ \
+            __recent_frq = (__context_frq(o4, 0) + 6) / 2; /* recency scaling */ \
             rc_decode_cum(__coder, __o4->m_sum + __recent_frq);             \
-            while(__cum + __recent_frq + __o4_sym_node->m_frq <= __coder->m_decode_cum) { \
-                __cum += __o4_sym_node->m_frq;                              \
-                __o4_sym_prev = __o4_sym_node;                              \
-                __o4_sym_node = __o4_sym_node->m_next;                      \
+            __i = 0;                                                        \
+            while(__cum + __recent_frq + __context_frq(o4, __i) <= __coder->m_decode_cum) { \
+                __cum += __context_frq(o4, __i);                            \
+                __i++;                                                      \
             }                                                               \
-            if(__o4_sym_node == __o4->m_symbols) {                          \
-                __frq = __o4_sym_node->m_frq + __recent_frq;                \
+            if(__i == 0) {                                                  \
+                __frq = __context_frq(__o4, __i) + __recent_frq;            \
             } else {                                                        \
-                __frq = __o4_sym_node->m_frq;                               \
+                __frq = __context_frq(__o4, __i);                           \
                 __cum += __recent_frq;                                      \
-                __o4_sym_prev->m_next = __o4_sym_node->m_next;              \
-                __o4_sym_node->m_next = __o4->m_symbols;                    \
-                __o4->m_symbols = __o4_sym_node;                            \
+                __tmp_symbol[0] = __context_sym(__o4, __i);                 \
+                __tmp_symbol[1] = __context_frq(__o4, __i);                 \
+                memmove(__o4->m_symbols + 1, __o4->m_symbols, sizeof(__o4->m_symbols[0]) * __i); \
+                __context_sym(__o4, 0) = __tmp_symbol[0];                   \
+                __context_frq(__o4, 0) = __tmp_symbol[1];                   \
             }                                                               \
             rc_decode(__coder, __cum, __frq, do_input);                     \
         }                                                                   \
-        __c[0] = __o4->m_symbols->m_sym;                                    \
+        __c[0] = __context_sym(o4, 0);                                      \
     }                                                                       \
 }while(0)
 
 static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
-    symbol_t* o4_sym_prev = (symbol_t*)o4; /* first member is the same "->m_next" */
-    symbol_t* o4_sym_node;
     o2_context_t* o2 = __o2(model);
+    int n = 0;
     int i;
     int o2cnt = o2->m_cnt;
     int o2sum = o2->m_sum;
     int o2frq = 0;
 
-    o4->m_symbols->m_sym = c;
-    if(o4->m_symbols->m_frq == 0) { /* calculate init frequency */
+    if(__context_frq(o4, 0) == 0) { /* calculate init frequency */
         for(i = 0; i < o2cnt; i++) {
             if(__context_sym(o2, i) == c) {
                 o2frq = __context_frq(o2, i);
@@ -525,37 +499,35 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
             }
         }
         if(o4->m_sum == 0) {
-            o4->m_symbols->m_frq = 2 + o2frq * 2 / (o2sum + o2cnt + 1 - o2frq);
+            __context_frq(o4, 0) = 2 + o2frq * 2 / (o2sum + o2cnt + 1 - o2frq);
         } else {
-            o4->m_symbols->m_frq = 2 + o2frq * (o4->m_sum + o4->m_cnt + 1) / (o2sum + o2cnt + o4->m_sum - o2frq);
+            __context_frq(o4, 0) = 2 + o2frq * (o4->m_sum + o4->m_cnt + 1) / (o2sum + o2cnt + o4->m_sum - o2frq);
         }
-        o4->m_symbols->m_frq = (o4->m_symbols->m_frq > 0) ? o4->m_symbols->m_frq : 1;
-        o4->m_symbols->m_frq = (o4->m_symbols->m_frq < 8) ? o4->m_symbols->m_frq : 7;
-        o4->m_sum += o4->m_symbols->m_frq;
+        __context_frq(o4, 0) = (__context_frq(o4, 0) > 0) ? __context_frq(o4, 0) : 1;
+        __context_frq(o4, 0) = (__context_frq(o4, 0) < 8) ? __context_frq(o4, 0) : 7;
+        __context_sym(o4, 0) = c;
+        o4->m_sum += __context_frq(o4, 0);
     } else {
         /* update freq */
+        __context_frq(o4, 0) += 3;
+        __context_sym(o4, 0) = c;
         o4->m_sum += 3;
-        o4->m_symbols->m_frq += 3;
     }
 
-    if(o4->m_symbols->m_frq > 250 || o4->m_sum > 32000) { /* rescale */
-        o4_sym_node = o4->m_symbols;
-        model->m_symbol_counts -= o4->m_cnt;
-        o4->m_sum = 0;
+    if(__context_frq(o4, 0) > 250) { /* rescale */
         o4->m_cnt = 0;
-        while(o4_sym_node != NULL) { /* halves frequency of all symbols */
-            if((o4_sym_node->m_frq /= 2) == 0) { /* remove nodes with zero frequency */
-                o4_sym_prev->m_next = o4_sym_node->m_next;
-                allocator_free(model->m_symbol_allocator, o4_sym_node);
-                o4_sym_node = o4_sym_prev->m_next;
-            } else {
-                o4->m_sum += o4_sym_node->m_frq;
+        o4->m_sum = 0;
+        for(i = 0; i + n < 24; i++) {
+            if((__context_frq(o4, i) = __context_frq(o4, i + n) / 2) > 0) {
+                __context_sym(o4, i) = __context_sym(o4, i + n);
                 o4->m_cnt += 1;
-                o4_sym_prev = o4_sym_node;
-                o4_sym_node = o4_sym_node->m_next;
-                model->m_symbol_counts += 1;
+                o4->m_sum += __context_frq(o4, i);
+            } else {
+                n++;
+                i--;
             }
         }
+        memset(o4->m_symbols + o4->m_cnt, 0, sizeof(o4->m_symbols[0]) * (24 - o4->m_cnt));
     }
     return;
 }
@@ -567,7 +539,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
     __param(uint8_t, (uint8_t)(c), __c);                                    \
     o4_context_t* __o4 = __o4_context_node(__model);                        \
     int           __i;                                                      \
-    int           __order = 4;                                              \
+    int           __order = 2;                                              \
     int           __escape;                                                 \
     uint16_t      __cum = 0;                                                \
     uint16_t      __sum = 0;                                                \
