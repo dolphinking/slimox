@@ -28,7 +28,7 @@ Here is a simple benchmark with __bible.txt__, compared with gzip and bzip2.
  <tr><td>program</td>             <td>size</td>        <td>encode-time</td>     <td>decode-time</td></tr>
  <tr><td>gzip</td>                <td>1191061</td>     <td>0.90s</td>           <td>0.09s</td></tr>
  <tr><td>bzip2</td>               <td>845635</td>      <td>1.73s</td>           <td>0.71s</td></tr>
- <tr><td>slimox (20130301)</td>   <td>776511</td>      <td>3.17s</td>           <td>2.91s</td></tr>
+ <tr><td>slimox (20130304)</td>   <td>776511</td>      <td>2.20s</td>           <td>1.92s</td></tr>
 </table>
 
 Build and Run
