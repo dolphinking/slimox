@@ -91,6 +91,11 @@ static inline void matcher_update(matcher_t* matcher, unsigned char* data, uint3
         matcher->m_lzp4[M_hash4_(data + pos - 4)] = pos | (uint64_t)context4 << 32;
         matcher->m_lzp2[M_hash2_(data + pos - 2)] = pos;
     }
+
+    /* prefetch for next round */
+    __builtin_prefetch(matcher->m_lzp8 + M_hash8_(data + pos - 7), 1, 3);
+    __builtin_prefetch(matcher->m_lzp4 + M_hash4_(data + pos - 3), 1, 3);
+    __builtin_prefetch(matcher->m_lzp2 + M_hash2_(data + pos - 1), 1, 3);
     return;
 }
 #endif
