@@ -33,7 +33,6 @@
 
 int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
     int outsize = 0;
-    int percent = 0;
     int pos = 0;
     int match_len;
     int i;
@@ -62,10 +61,6 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
     matcher_init(&matcher);
     rc_enc_init(&coder);
     while(pos < ib->m_size) {
-        if(percent < pos / (ib->m_size / 100 + 1)) {
-            fprintf(stderr, "=> %2d%%\r", (percent = pos / (ib->m_size / 100 + 1)));
-        }
-
         match_len = 1;
         if(pos > 8 && pos < ib->m_size - 256) { /* avoid overflow */
             match_len = matcher_lookup(&matcher, ib->m_data, pos);
@@ -92,10 +87,13 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
             pos++;
         }
 
-        if(fout_sync && ob->m_size > 262144) { /* sync to file */
-            fwrite(ob->m_data, 1, ob->m_size, fout_sync);
-            outsize += ob->m_size;
-            ob->m_size = 0;
+        if(fout_sync && ob->m_size > 16384) {
+            if(fout_sync) {
+                fwrite(ob->m_data, 1, ob->m_size, fout_sync); /* sync to file */
+                outsize += ob->m_size;
+                ob->m_size = 0;
+            }
+            fprintf(stderr, "%d => %d\r", pos, outsize);
         }
     }
     matcher_free(&matcher);
@@ -106,6 +104,7 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
         outsize += ob->m_size;
         ob->m_size = 0;
     }
+    fprintf(stderr, "%d => %d\n", pos, outsize);
     return outsize;
 }
 
@@ -133,7 +132,8 @@ int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm) {
     rc_dec_init(&coder, input = ib->m_data[pos++]);
     while(ob->m_size < size) {
         if(percent < pos / (ib->m_size / 100 + 1)) {
-            fprintf(stderr, "=> %2d%%\r", (percent = pos / (ib->m_size / 100 + 1)));
+            percent = pos / (ib->m_size / 100 + 1);
+            fprintf(stderr, "%d <= %d\r", ob->m_size, pos);
         }
 
         match_len = 1;
@@ -162,6 +162,7 @@ int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm) {
             match_len--;
         }
     }
+    fprintf(stderr, "%d <= %d\n", ob->m_size, pos);
     matcher_free(&matcher);
     return 0;
 }
