@@ -56,8 +56,9 @@ typedef struct see_model_t {
 typedef struct o2_context_t {
     uint16_t m_sum;
     uint16_t m_cnt;
+    uint16_t m_esc;
     uint8_t  m_symbols[256][2];
-} o2_context_t;
+} __attribute__((__packed__)) o2_context_t;
 
 /* o4-structure types */
 typedef struct o4_context_t {
@@ -173,7 +174,7 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     int lowcnt = __o2(model)->m_cnt;
     uint32_t context = 0;
 
-    if(curcnt == 0) return &model->m_see_01; /* no symbols nnder current context -- always escape */
+    if(curcnt == 0) return &model->m_see_01; /* no symbols under current context -- always escape */
     if(curcnt == 1) {
         /* QUANTIZE(binary) = (last_esc[1] | sum[3] | lowcnt[2] | lowsum[1] | bin_symbol[3] | previous symbols[6]) */
         context |= ((model->m_context >>  6) & 0x03);
@@ -200,11 +201,12 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     return NULL;
 }
 
-#define __o2_encode(o2, coder, c, do_output, escape)                    do{ \
+#define __o2_encode(o2, coder, c, do_output, escape, has_exclusion)     do{ \
     __param(o2_context_t*, o2, __o2);                                       \
     __param(rc_coder_t*, coder, __coder);                                   \
     __param(unsigned char, c, __c);                                         \
     __param(int*, escape, __escape);                                        \
+    __param(int*, has_exclusion, __has_exclusion);                          \
     int __found = 0;                                                        \
     int __found_index = 0;                                                  \
     int __i;                                                                \
@@ -213,27 +215,39 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     uint16_t __sumx = 0;                                                    \
     uint16_t __escx = 0;                                                    \
     uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0)); \
-    for(__i = 0; __i < __o2->m_cnt; __i++) {                                \
-        __cumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i)) && !__found && __context_sym(o2, __i) != __c); \
-        __sumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i))); \
-        __escx += __context_frq(o2, __i) == 1;                              \
-        if(__context_sym(o2, __i) == __c) {                                 \
-            __found_index = __i;                                            \
-            __found = 1;                                                    \
-            swap(__context_frq(o2, __i), __context_frq(o2, 0));             \
-            swap(__context_sym(o2, __i), __context_sym(o2, 0));             \
+    if(!__has_exclusion[0]) {                                               \
+        for(__i = 0; __i < __o2->m_cnt; __i++) { /*no exclusion */          \
+            if(__context_sym(o2, __i) == __c) {                             \
+                __found_index = __i;                                        \
+                __found = 1;                                                \
+                swap(__context_frq(o2, __i), __context_frq(o2, 0));         \
+                swap(__context_sym(o2, __i), __context_sym(o2, 0));         \
+                break;                                                      \
+            }                                                               \
+            __cumx += __context_frq(o2, __i);                               \
+        }                                                                   \
+        __sumx = __o2->m_sum;                                               \
+    } else {                                                                \
+        for(__i = 0; __i < __o2->m_cnt; __i++) {                            \
+            __cumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i)) && !__found && __context_sym(o2, __i) != __c); \
+            __sumx += __context_frq(o2, __i) & -(!__ex_get(__context_sym(o2, __i))); \
+            if(__context_sym(o2, __i) == __c) {                             \
+                __found_index = __i;                                        \
+                __found = 1;                                                \
+                swap(__context_frq(o2, __i), __context_frq(o2, 0));         \
+                swap(__context_sym(o2, __i), __context_sym(o2, 0));         \
+            }                                                               \
         }                                                                   \
     }                                                                       \
     __frqx = __context_frq(o2, 0) + (__recent_frq & -(__found_index == 0)); \
+    __escx = __o2->m_esc + !__o2->m_esc;                                    \
     __cumx += __recent_frq & -(__found_index > 0);                          \
-    __escx += !__escx;                                                      \
     __sumx += __recent_frq + __escx;                                        \
     if(!__found) {                                                          \
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o2->m_cnt; __i++) { /* exclude */              \
-            if(__context_frq(o2, __i) != 0) {                               \
-                __ex_set(__context_sym(o2, __i));                           \
-            }                                                               \
+            __ex_set(__context_sym(o2, __i));                               \
+            __has_exclusion[0] = 1;                                         \
         }                                                                   \
         __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);              \
         __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);              \
@@ -248,28 +262,33 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     rc_encode(__coder, __cumx, __frqx, __sumx, do_output);                  \
 }while(0)
 
-#define __o2_decode(o2, coder, c, do_input, escape)                     do{ \
+#define __o2_decode(o2, coder, c, do_input, escape, has_exclusion)      do{ \
     __param(o2_context_t*, o2, __o2);                                       \
     __param(rc_coder_t*, coder, __coder);                                   \
     __param(unsigned char*, c, __c);                                        \
     __param(int*, escape, __escape);                                        \
+    __param(int*, has_exclusion, __has_exclusion);                          \
     int __i;                                                                \
     uint16_t __cumx = 0;                                                    \
     uint16_t __frqx = 0;                                                    \
     uint16_t __sumx = 0;                                                    \
     uint16_t __escx = 0;                                                    \
     uint16_t __recent_frq = __context_frq(o2, 0) & -!__ex_get(__context_sym(o2, 0)); \
-    for(__i = 0; __i < __o2->m_cnt; __i++) {                                \
-        __sumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i)); \
-        __escx += __context_frq(o2, __i) == 1;                              \
+    if(!__has_exclusion) {                                                  \
+        __sumx = __o4->m_sum; /* no exclusion */                            \
+    } else {                                                                \
+        for(__i = 0; __i < __o2->m_cnt; __i++) {                            \
+            __sumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i)); \
+        }                                                                   \
     }                                                                       \
-    __escx += !__escx;                                                      \
+    __escx = __o2->m_esc + !__o2->m_esc;                                    \
     __sumx += __recent_frq + __escx;                                        \
     rc_decode_cum(__coder, __sumx);                                         \
     if(__sumx - __escx <= __coder->m_decode_cum) {                          \
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o2->m_cnt; __i++) { /* exclude */              \
             __ex_set(__context_sym(o2, __i));                               \
+            __has_exclusion[0] = 1;                                         \
         }                                                                   \
         __context_frq(o2, __o2->m_cnt) = __context_frq(o2, 0);              \
         __context_sym(o2, __o2->m_cnt) = __context_sym(o2, 0);              \
@@ -280,9 +299,16 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
     } else {                                                                \
         __escape[0] = 0;                                                    \
         __i = 0;                                                            \
-        while(__cumx + __recent_frq + (__context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i))) <= __coder->m_decode_cum) { \
-            __cumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i)); \
-            __i++;                                                          \
+        if(!__has_exclusion) {                                              \
+            while(__cumx + __recent_frq + __context_frq(o2, __i) <= __coder->m_decode_cum) { /* no exclusion */ \
+                __cumx += __context_frq(o2, __i);                           \
+                __i++;                                                      \
+            }                                                               \
+        } else {                                                            \
+            while(__cumx + __recent_frq + (__context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i))) <= __coder->m_decode_cum) { \
+                __cumx += __context_frq(o2, __i) & -!__ex_get(__context_sym(o2, __i)); \
+                __i++;                                                      \
+            }                                                               \
         }                                                                   \
         __frqx = __context_frq(o2, __i);                                    \
         __c[0] = __context_sym(o2, __i);                                    \
@@ -301,18 +327,21 @@ static inline void __o2_update(o2_context_t* o2, int c) {
     int n = 0;
     int i;
 
-    o2->m_sum += 1;
     __context_frq(o2, 0) += 1;
     __context_sym(o2, 0) = c;
+    o2->m_sum += 1;
+    o2->m_esc += (__context_frq(o2, 0) == 1) - (__context_frq(o2, 0) == 2);
 
     if(__context_frq(o2, 0) > 250) { /* rescale */
         o2->m_cnt = 0;
         o2->m_sum = 0;
+        o2->m_esc = 0;
         for(i = 0; i + n < 256; i++) {
             if((__context_frq(o2, i) = __context_frq(o2, i + n) / 2) > 0) {
                 __context_sym(o2, i) = __context_sym(o2, i + n);
                 o2->m_cnt += 1;
                 o2->m_sum += __context_frq(o2, i);
+                o2->m_esc += __context_frq(o2, i) == 1;
             } else {
                 n++;
                 i--;
@@ -375,12 +404,13 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
     return o4;
 }
 
-#define __o4_encode(model, o4, coder, c, do_output, escape)             do{ \
+#define __o4_encode(model, o4, coder, c, do_output, escape, exclusion)  do{ \
     __param(ppm_model_t*, model, __model);                                  \
     __param(rc_coder_t*, coder, __coder);                                   \
     __param(o4_context_t*, o4, __o4);                                       \
     __param(uint8_t, c, __c);                                               \
     __param(int*, escape, __escape);                                        \
+    __param(int*, exclusion, __exclusion);                                  \
     see_model_t* __see = __ppm_see_context_o4(__model, __o4);               \
     uint8_t      __tmp_symbol[2];                                           \
     uint16_t     __cum = 0;                                                 \
@@ -415,6 +445,7 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o4->m_cnt; __i++) {                            \
             __ex_set(__context_sym(__o4, __i)); /* exclude o4 */            \
+            __exclusion[0] = 1;                                             \
         }                                                                   \
         if(__o4->m_cnt == 66) {                                             \
             __o4->m_sum -= __context_frq(__o4, __o4->m_cnt - 1);            \
@@ -427,12 +458,13 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
     }                                                                       \
 }while(0)
 
-#define __o4_decode(model, o4, coder, c, do_input, escape)              do{ \
+#define __o4_decode(model, o4, coder, c, do_input, escape, exclusion)   do{ \
     __param(ppm_model_t*, model, __model);                                  \
     __param(rc_coder_t*, coder, __coder);                                   \
     __param(o4_context_t*, o4, __o4);                                       \
     __param(uint8_t*, c, __c);                                              \
     __param(int*, escape, __escape);                                        \
+    __param(int*, exclusion, __exclusion);                                  \
     see_model_t* __see = __ppm_see_context_o4(__model, __o4);               \
     uint8_t      __tmp_symbol[2];                                           \
     uint16_t     __cum = 0;                                                 \
@@ -446,6 +478,7 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         __escape[0] = 1;                                                    \
         for(__i = 0; __i < __o4->m_cnt; __i++) {                            \
             __ex_set(__context_sym(__o4, __i)); /* exclude o4 */            \
+            __exclusion[0] = 1;                                             \
         }                                                                   \
         if(__o4->m_cnt == 66) {                                             \
             __o4->m_sum -= __context_frq(__o4, __o4->m_cnt - 1);            \
@@ -487,21 +520,19 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
     o2_context_t* o2 = __o2(model);
     int n = 0;
     int i;
-    int o2cnt = o2->m_cnt;
-    int o2sum = o2->m_sum;
     int o2frq = 0;
 
     if(__context_frq(o4, 0) == 0) { /* calculate init frequency */
-        for(i = 0; i < o2cnt; i++) {
+        for(i = 0; i < o2->m_cnt; i++) {
             if(__context_sym(o2, i) == c) {
                 o2frq = __context_frq(o2, i);
                 break;
             }
         }
         if(o4->m_sum == 0) {
-            __context_frq(o4, 0) = 2 + o2frq * 2 / (o2sum + o2cnt + 1 - o2frq);
+            __context_frq(o4, 0) = 2 + o2frq * 2 / (o2->m_sum + o2->m_cnt + 1 - o2frq);
         } else {
-            __context_frq(o4, 0) = 2 + o2frq * (o4->m_sum + o4->m_cnt + 1) / (o2sum + o2cnt + o4->m_sum - o2frq);
+            __context_frq(o4, 0) = 2 + o2frq * (o4->m_sum + o4->m_cnt + 1) / (o2->m_sum + o2->m_cnt + o4->m_sum - o2frq);
         }
         __context_frq(o4, 0) = (__context_frq(o4, 0) > 0) ? __context_frq(o4, 0) : 1;
         __context_frq(o4, 0) = (__context_frq(o4, 0) < 8) ? __context_frq(o4, 0) : 7;
@@ -540,6 +571,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
     o4_context_t* __o4 = __o4_context_node(__model);                        \
     int           __i;                                                      \
     int           __order = 2;                                              \
+    int           __has_exclusion = 0;                                      \
     int           __escape;                                                 \
     uint16_t      __cum = 0;                                                \
     uint16_t      __sum = 0;                                                \
@@ -551,10 +583,10 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
     }                                                                       \
     __builtin_prefetch(__model->m_o4_buckets + __o4_hash(model->m_context << 8 | __c), 1, 3); /* prefetch for next round */ \
     while(-1) {                                                             \
-        __order = 4; __o4_encode(__model, __o4, __coder, __c, do_output, &__escape); if(!__escape) break; \
-        __order = 2; __o2_encode(__o2(__model), __coder, __c, do_output, &__escape); if(!__escape) break; \
-        __order = 1; __o2_encode(__o1(__model), __coder, __c, do_output, &__escape); if(!__escape) break; \
-        __order = 0; __o2_encode(__o0(__model), __coder, __c, do_output, &__escape); if(!__escape) break; \
+        __order = 4; __o4_encode(__model, __o4, __coder, __c, do_output, &__escape, &__has_exclusion); if(!__escape) break; \
+        __order = 2; __o2_encode(__o2(__model), __coder, __c, do_output, &__escape, &__has_exclusion); if(!__escape) break; \
+        __order = 1; __o2_encode(__o1(__model), __coder, __c, do_output, &__escape, &__has_exclusion); if(!__escape) break; \
+        __order = 0; __o2_encode(__o0(__model), __coder, __c, do_output, &__escape, &__has_exclusion); if(!__escape) break; \
         for(__i = 0; __i < 256; __i++) { /* encode with o(-1) */            \
             __cum += !__ex_get(__i) && (__i < __c);                         \
             __sum += !__ex_get(__i);                                        \
@@ -579,6 +611,7 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
     o4_context_t* __o4 = __o4_context_node(__model);                        \
     int           __i;                                                      \
     int           __order = 4;                                              \
+    int           __has_exclusion = 0;                                      \
     int           __escape;                                                 \
     uint16_t      __cum = 0;                                                \
     uint16_t      __sum = 0;                                                \
@@ -589,10 +622,10 @@ static inline void __o4_update(ppm_model_t* model, o4_context_t* o4, int c) {
         memset(__o2(__model), 0, sizeof(o2_context_t));                     \
     }                                                                       \
     while(-1) {                                                             \
-        __order = 4; __o4_decode(__model, __o4, __coder, __c, do_input, &__escape); if(!__escape) break; \
-        __order = 2; __o2_decode(__o2(__model), __coder, __c, do_input, &__escape); if(!__escape) break; \
-        __order = 1; __o2_decode(__o1(__model), __coder, __c, do_input, &__escape); if(!__escape) break; \
-        __order = 0; __o2_decode(__o0(__model), __coder, __c, do_input, &__escape); if(!__escape) break; \
+        __order = 4; __o4_decode(__model, __o4, __coder, __c, do_input, &__escape, &__has_exclusion); if(!__escape) break; \
+        __order = 2; __o2_decode(__o2(__model), __coder, __c, do_input, &__escape, &__has_exclusion); if(!__escape) break; \
+        __order = 1; __o2_decode(__o1(__model), __coder, __c, do_input, &__escape, &__has_exclusion); if(!__escape) break; \
+        __order = 0; __o2_decode(__o0(__model), __coder, __c, do_input, &__escape, &__has_exclusion); if(!__escape) break; \
         for(__i = 0; __i < 256; __i++) { /* decode with o(-1) */            \
             __sum += !__ex_get(__i);                                        \
         }                                                                   \
