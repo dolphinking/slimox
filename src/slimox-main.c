@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include "slimox-ppm.h"
 #include "slimox-buf.h"
 
@@ -39,20 +41,33 @@
 extern int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync);
 extern int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm);
 
+extern int pack(const char* path, const char* outfile, ppm_model_t* ppm, int block_size);
+extern int unpack(const char* infile, const char* path, ppm_model_t* ppm, int block_size);
+
 const char* msg_start = (
         "============================================\n"
-        " comprox: an LZP-PPM compressor             \n"
+        " comprox: an LZP-PPM compressor/archiver    \n"
         " written by Zhang Li <richselian@gmail.com> \n"
         "============================================\n");
 const char* msg_help = (
-        "to compress:   slimox e [input] [output]\n"
-        "to decompress: slimox d [input] [output]\n"
+        "to pack directory:   slimox [SWITCH] epack [input-dir] [output]\n"
+        "to unpack directory: slimox [SWITCH] dpack [input] [output-dir]\n"
+        "to compress file:    slimox [SWITCH] e [input] [output]\n"
+        "to decompress file:  slimox [SWITCH] d [input] [output]\n"
         "\n"
         "optional SWITCH:\n"
         " -q  quiet mode.\n"
         " -b  set block size(MB), default = 16.\n");
 
 int main(int argc, char** argv) {
+    enum {
+        OPERATION_INVALID,
+        OPERATION_COMP,
+        OPERATION_DECOMP,
+        OPERATION_PACK,
+        OPERATION_UNPACK,
+    } operation = OPERATION_INVALID;
+
     FILE* fi;
     FILE* fo;
     char option;
@@ -96,56 +111,73 @@ int main(int argc, char** argv) {
 
     /* start! */
     fprintf(stderr, msg_start);
-    if(argc == 4 && strcmp(argv[1], "e") == 0) {
+    if(argc == 4 && strcmp(argv[1], "epack") == 0) { /* pack directory */
+        operation = OPERATION_PACK;
+        pack(argv[2], argv[3], ppm, block_size);
+    }
+    if(argc == 4 && strcmp(argv[1], "dpack") == 0) { /* unpack directory */
+        operation = OPERATION_PACK;
+        unpack(argv[2], argv[3], ppm, block_size);
+    }
+    if(argc == 4 && strcmp(argv[1], "e") == 0) { /* compress single file */
+        operation = OPERATION_COMP;
+        if((fi = fopen(argv[2], "rb")) == NULL) {
+            fprintf(stderr, "open '%s' failed.\n", argv[2]);
+            goto SlimoxMain_final;
+        }
+        if((fo = fopen(argv[3], "wb")) == NULL) {
+            fprintf(stderr, "open '%s' failed.\n", argv[3]);
+            fclose(fi);
+            goto SlimoxMain_final;
+        }
         fprintf(stderr, "compressing %s to %s...\n", argv[2], argv[3]);
-        fi = fopen(argv[2], "rb");
-        fo = fopen(argv[3], "wb");
-        if(fi && fo) {
-            while((ib->m_size = fread(ib->m_data, 1, ib->m_capacity, fi)) > 0) {
-                pos_sync = ftell(fo);
-                buf_resize(ob, 0);
-                fwrite(&ob->m_size, sizeof(ob->m_size), 1, fo);
 
-                out_size = slimox_encode(ib, ob, ppm, fo);
-                fseek(fo, pos_sync, SEEK_SET);
-                fwrite(&out_size, sizeof(ob->m_size), 1, fo);
-                fseek(fo, 0, SEEK_END);
-            }
-            src_size = ftell(fi);
-            dst_size = ftell(fo);
-            fprintf(stderr, "%d => %d in %.2lfs\n", src_size, dst_size, (double)(clock() - timer_start) / CLOCKS_PER_SEC);
-        } else {
-            perror("error: fopen()");
-            dst_size = -1;
+        while((ib->m_size = fread(ib->m_data, 1, ib->m_capacity, fi)) > 0) {
+            pos_sync = ftell(fo);
+            buf_resize(ob, 0);
+            fwrite(&ob->m_size, sizeof(ob->m_size), 1, fo);
+
+            out_size = slimox_encode(ib, ob, ppm, fo);
+            fseek(fo, pos_sync, SEEK_SET);
+            fwrite(&out_size, sizeof(ob->m_size), 1, fo);
+            fseek(fo, 0, SEEK_END);
         }
-        if(fi) fclose(fi);
-        if(fo) fclose(fo);
+        src_size = ftell(fi);
+        dst_size = ftell(fo);
+        fprintf(stderr, "%d => %d in %.2lfs\n", src_size, dst_size, (double)(clock() - timer_start) / CLOCKS_PER_SEC);
+        fclose(fi);
+        fclose(fo);
     }
-    if(argc == 4 && strcmp(argv[1], "d") == 0) {
+    if(argc == 4 && strcmp(argv[1], "d") == 0) { /* decompress single file */
+        operation = OPERATION_DECOMP;
+        if((fi = fopen(argv[2], "rb")) == NULL) {
+            fprintf(stderr, "open '%s' failed.\n", argv[2]);
+            goto SlimoxMain_final;
+        }
+        if((fo = fopen(argv[3], "wb")) == NULL) {
+            fprintf(stderr, "open '%s' failed.\n", argv[3]);
+            fclose(fi);
+            goto SlimoxMain_final;
+        }
         fprintf(stderr, "decompressing %s to %s...\n", argv[2], argv[3]);
-        fi = fopen(argv[2], "rb");
-        fo = fopen(argv[3], "wb");
-        if(fi && fo) {
-            while(fread(&ib->m_size, sizeof(ib->m_size), 1, fi) > 0) {
-                buf_resize(ib, ib->m_size);
-                buf_resize(ob, 0);
-                fread(ib->m_data, 1, ib->m_size, fi);
 
-                slimox_decode(ib, ob, ppm);
-                fwrite(ob->m_data, 1, ob->m_size, fo);
-            }
-            src_size = ftell(fi);
-            dst_size = ftell(fo);
-            fprintf(stderr, "%d <= %d in %.2lfs\n", dst_size, src_size, (double)(clock() - timer_start) / CLOCKS_PER_SEC);
-        } else {
-            perror("error: fopen()");
-            dst_size = -1;
+        while(fread(&ib->m_size, sizeof(ib->m_size), 1, fi) > 0) {
+            buf_resize(ib, ib->m_size);
+            buf_resize(ob, 0);
+            fread(ib->m_data, 1, ib->m_size, fi);
+
+            slimox_decode(ib, ob, ppm);
+            fwrite(ob->m_data, 1, ob->m_size, fo);
         }
-        if(fi) fclose(fi);
-        if(fo) fclose(fo);
+        src_size = ftell(fi);
+        dst_size = ftell(fo);
+        fprintf(stderr, "%d <= %d in %.2lfs\n", dst_size, src_size, (double)(clock() - timer_start) / CLOCKS_PER_SEC);
+        fclose(fi);
+        fclose(fo);
     }
 
-    if(dst_size == 0) { /* error happend? */
+SlimoxMain_final:
+    if(operation == OPERATION_INVALID) { /* bad operation */
         fprintf(stderr, msg_help);
     }
     ppm_model_del(ppm);

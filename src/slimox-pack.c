@@ -32,10 +32,47 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
+
 #include "slimox-ppm.h"
 #include "slimox-buf.h"
 
 #define FILENAME_MAXLEN 32768
+
+#if defined(WIN32) || defined(WIN64)
+#include <windows.h>
+
+#define tmpfile()     tmpfile_mingw()
+#define mkdir(_1, _2) mkdir(_1)
+#define lstat(_1, _2) stat(_1, _2)
+
+static inline FILE* tmpfile_mingw() {
+    static char filename[MAX_PATH] = {0};
+
+    GetTempFileName(".", NULL, 0, filename);
+    return fopen(filename,"w+bTD");
+}
+
+static inline const char* __path(const char* path) {
+    static char newpath[FILENAME_MAXLEN + 1];
+    char* p;
+
+    strcpy(newpath, path);
+    for(p = newpath; *p != '\0'; p++) {
+        if(*p == '\x2f') {
+            *p = '\x5c';
+        }
+    }
+    if(*--p == '\\') {
+        *p = 0;
+    }
+    return newpath;
+}
+
+#else /* non-windows */
+#define __path(_1) _1
+#endif
+
+
 
 extern int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync);
 extern int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm);
@@ -48,9 +85,13 @@ static int traverse_directory_make_header(const char* path, const char* root, FI
     struct stat st;
 
     /* write file information of root dir */
-    snprintf(fullpath, sizeof(fullpath), "%s/%s", path, root);
-    if(lstat(fullpath, &st) == -1) {
-        fprintf(stderr, "warning: ignore file '%s': stat failed.\n", fullpath);
+    if(*root) {
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, root);
+    } else {
+        snprintf(fullpath, sizeof(fullpath), "%s", path);
+    }
+    if(lstat(__path(fullpath), &st) == -1) {
+        fprintf(stderr, "warning: ignore file '%s': stat failed.\n", __path(fullpath));
         return -1;
     }
     fprintf(outstream, "%s//%lx.%lu\n", root, (unsigned long)st.st_mode, 0l);
@@ -76,7 +117,7 @@ static int traverse_directory_make_header(const char* path, const char* root, FI
         snprintf(rootpath, sizeof(rootpath), "%s/%s", root, item->d_name);
 
         /* stat */
-        if(lstat(fullpath, &st) == -1) {
+        if(lstat(__path(fullpath), &st) == -1) {
             fprintf(stderr, "warning: ignore file '%s/%s': stat failed.\n", path, item->d_name);
             continue;
         }
@@ -242,8 +283,8 @@ int unpack(const char* infile, const char* path, ppm_model_t* ppm, int block_siz
 
         /* create directory */
         if(S_ISDIR(mode)) {
-            mkdir(fullpath, mode);
-            if(stat(fullpath, &st) == -1 || !S_ISDIR(st.st_mode)) {
+            mkdir(__path(fullpath), mode);
+            if(lstat(__path(fullpath), &st) == -1 || !S_ISDIR(st.st_mode)) {
                 fprintf(stderr, "error: cannot create directory '%s'.\n", path);
                 break;
             }
