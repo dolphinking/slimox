@@ -81,7 +81,7 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
             }
         }
         for(i = 0; i < match_len; i++) { /* update context */
-            matcher_update(&matcher, ib->m_data, pos);
+            matcher_update(&matcher, ib->m_data, pos, 1);
             ppm->m_context <<= 8;
             ppm->m_context |= ib->m_data[pos];
             pos++;
@@ -156,7 +156,7 @@ int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm) {
             }
         }
         while(match_len > 0) { /* update context */
-            matcher_update(&matcher, ob->m_data, ob->m_size - match_len);
+            matcher_update(&matcher, ob->m_data, ob->m_size - match_len, 0);
             ppm->m_context <<= 8;
             ppm->m_context |= ob->m_data[ob->m_size - match_len];
             match_len--;
