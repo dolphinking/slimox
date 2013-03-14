@@ -35,17 +35,17 @@
 #define __param(t, p, n) t(__param_##n)=(p); t(n)=(__param_##n)
 #endif
 
+/* based on Dmitry Subbotin's carryless range coder */
+
 typedef struct rc_coder_t {
     uint32_t m_low;
     uint32_t m_range;
-    uint32_t m_follow;
-    uint32_t m_carry;
-    uint32_t m_cache;
+    uint32_t m_code;
     uint16_t m_decode_cum;
 } rc_coder_t;
 
-static const uint32_t rc_top_ =      0x01 << 24;
-static const uint32_t rc_thresold_ = 0xff << 24;
+static const uint32_t rc_top_ = 1 << 24;
+static const uint32_t rc_bot_ = 1 << 16;
 
 /*******************************************************************************
  * encode methods
@@ -54,29 +54,6 @@ static const uint32_t rc_thresold_ = 0xff << 24;
     __param(rc_coder_t*, rc, __rc);                                         \
     __rc->m_low = 0;                                                        \
     __rc->m_range = -1;                                                     \
-    __rc->m_follow = 0;                                                     \
-    __rc->m_cache = 0;                                                      \
-    __rc->m_carry = 0;                                                      \
-}while(0)
-
-#define rc_renormalize_(rc, do_output)                                  do{ \
-    __param(rc_coder_t*, rc, __rc);                                         \
-    if(__rc->m_low < rc_thresold_ || __rc->m_carry) {                       \
-        {   int output = __rc->m_cache + __rc->m_carry;                     \
-            {do_output;}                                                    \
-        }                                                                   \
-        while(__rc->m_follow > 0) {                                         \
-            {   int output = __rc->m_carry - 1;                             \
-                {do_output;}                                                \
-            }                                                               \
-            __rc->m_follow -= 1;                                            \
-        }                                                                   \
-        __rc->m_cache = __rc->m_low >> 24;                                  \
-        __rc->m_carry = 0;                                                  \
-    } else {                                                                \
-        __rc->m_follow += 1;                                                \
-    }                                                                       \
-    __rc->m_low *= 256;                                                     \
 }while(0)
 
 #define rc_encode(rc, cum, frq, sum, do_output)                         do{ \
@@ -85,22 +62,21 @@ static const uint32_t rc_thresold_ = 0xff << 24;
     __param(uint16_t, frq, __frq);                                          \
     __param(uint16_t, sum, __sum);                                          \
     __rc->m_range /= __sum;                                                 \
-    __rc->m_carry += (__rc->m_low + __cum * __rc->m_range) < __rc->m_low;   \
     __rc->m_low += __cum * __rc->m_range;                                   \
     __rc->m_range *= __frq;                                                 \
-    while(__rc->m_range < rc_top_) {                                        \
-        __rc->m_range *= 256;                                               \
-        rc_renormalize_(rc, do_output);                                     \
+    while((__rc->m_low ^ (__rc->m_low + __rc->m_range)) < rc_top_           \
+            || (__rc->m_range < rc_bot_ && ((__rc->m_range = -__rc->m_low & (rc_bot_ - 1)), 1))) { \
+        {int output = __rc->m_low >> 24; {do_output;}}                      \
+        __rc->m_low <<= 8;                                                  \
+        __rc->m_range <<= 8;                                                \
     }                                                                       \
 }while(0)
 
 #define rc_enc_flush(rc, do_output)                                     do{ \
     __param(rc_coder_t*, rc, __rc);                                         \
-    rc_renormalize_(__rc, do_output);                                       \
-    rc_renormalize_(__rc, do_output);                                       \
-    rc_renormalize_(__rc, do_output);                                       \
-    rc_renormalize_(__rc, do_output);                                       \
-    rc_renormalize_(__rc, do_output);                                       \
+    while(__rc->m_low || (__rc->m_low + __rc->m_range)) {                   \
+        {int output = __rc->m_low >> 24; {do_output;}} __rc->m_low <<= 8; __rc->m_range <<= 8; \
+    }                                                                       \
 }while(0)
 
 /*******************************************************************************
@@ -110,15 +86,12 @@ static const uint32_t rc_thresold_ = 0xff << 24;
     __param(rc_coder_t*, rc, __rc);                                         \
     __rc->m_low = 0;                                                        \
     __rc->m_range = -1;                                                     \
-    __rc->m_follow = 0;                                                     \
-    __rc->m_cache = 0;                                                      \
-    __rc->m_carry = 0;                                                      \
+    __rc->m_code = 0;                                                       \
     {   int input;                                                          \
-        {do_input;} __rc->m_cache = (__rc->m_cache * 256) + input;          \
-        {do_input;} __rc->m_cache = (__rc->m_cache * 256) + input;          \
-        {do_input;} __rc->m_cache = (__rc->m_cache * 256) + input;          \
-        {do_input;} __rc->m_cache = (__rc->m_cache * 256) + input;          \
-        {do_input;} __rc->m_cache = (__rc->m_cache * 256) + input;          \
+        {do_input;} __rc->m_code = (__rc->m_code * 256) + input;            \
+        {do_input;} __rc->m_code = (__rc->m_code * 256) + input;            \
+        {do_input;} __rc->m_code = (__rc->m_code * 256) + input;            \
+        {do_input;} __rc->m_code = (__rc->m_code * 256) + input;            \
     }                                                                       \
 }while(0)
 
@@ -126,21 +99,22 @@ static const uint32_t rc_thresold_ = 0xff << 24;
     __param(rc_coder_t*, rc, __rc);                                         \
     __param(uint16_t, cum, __cum);                                          \
     __param(uint16_t, frq, __frq);                                          \
-    __rc->m_cache -= __cum * __rc->m_range;                                 \
+    __rc->m_low += __cum * __rc->m_range;                                   \
     __rc->m_range *= __frq;                                                 \
-    while(__rc->m_range < rc_top_) {                                        \
-        __rc->m_range *= 256;                                               \
-        __rc->m_cache *= 256;                                               \
+    while((__rc->m_low ^ (__rc->m_low + __rc->m_range)) < rc_top_           \
+            || (__rc->m_range < rc_bot_ && ((__rc->m_range = -__rc->m_low & (rc_bot_ - 1)), 1))) { \
         {   int input;                                                      \
-            {do_input;} __rc->m_cache += input;                             \
+            {do_input;} __rc->m_code = __rc->m_code << 8 | input;           \
         }                                                                   \
+        __rc->m_range <<= 8;                                                \
+        __rc->m_low <<= 8;                                                  \
     }                                                                       \
 }while(0)
 
 #define rc_decode_cum(rc, sum)                                          do{ \
     __param(rc_coder_t*, rc, __rc);                                         \
     __param(uint16_t, sum, __sum);                                          \
-    __rc->m_decode_cum = __rc->m_cache / (__rc->m_range /= __sum);          \
+    __rc->m_decode_cum = (__rc->m_code - __rc->m_low) / (__rc->m_range /= __sum); \
 }while(0)
 
 #endif
