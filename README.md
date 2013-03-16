@@ -34,6 +34,11 @@ Here is a simple benchmark with __bible.txt__, compared with gzip and bzip2.
 Build and Run
 =============
 
-You can simply use `make` to automatically build the whole project. You can also compile each .c source with `gcc -msse2 -O3`.<br />
-encode: `bin/slimox e <fi> <fo>` <br />
-decode: `bin/slimox d <fi> <fo>` <br />
+You can simply use `make` to automatically build the whole project. You can also compile each .c source with `gcc -msse2 -O3`.
+
+Usage:
+
+compress a file:        `bin/slimox e <fi> <fo>` <br />
+decompress a file:      `bin/slimox d <fi> <fo>` <br />
+compress a directory:   `bin/slimox e <path> <fo>` <br />
+decompress a directory: `bin/slimox d <fi> <path>` <br />
