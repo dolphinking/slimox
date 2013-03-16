@@ -80,7 +80,6 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
                 ppm_encode(ppm, &coder, 0, ;; buf_append(ob, output));
             }
         }
-
         for(i = 0; i < match_len; i++) { /* update context */
             matcher_update(&matcher, ib->m_data, pos, 1);
             ppm->m_context <<= 8;
