@@ -36,9 +36,14 @@
 static const int match_min = 8;
 static const int match_max = 255;
 
+typedef struct matcher_poschk_t {
+    uint32_t m_pos;
+    uint16_t m_chk;
+} matcher_poschk_t;
+
 typedef struct matcher_t {
-    uint64_t* m_lzp8;
-    uint64_t* m_lzp4;
+    matcher_poschk_t* m_lzp8;
+    matcher_poschk_t* m_lzp4;
     uint32_t* m_lzp2;
 } matcher_t;
 
@@ -47,8 +52,8 @@ typedef struct matcher_t {
 #define M_hash8_(x)     ((*(uint64_t*)(x) ^ (*(uint64_t*)(x) >> 22) ^ (*(uint64_t*)(x) >> 44)) & 0xfffff)
 
 static inline void matcher_init(matcher_t* matcher) {
-    matcher->m_lzp8 = calloc((1 << 20), sizeof(uint64_t));
-    matcher->m_lzp4 = calloc((1 << 20), sizeof(uint64_t));
+    matcher->m_lzp8 = calloc((1 << 20), sizeof(matcher_poschk_t));
+    matcher->m_lzp4 = calloc((1 << 20), sizeof(matcher_poschk_t));
     matcher->m_lzp2 = calloc((1 << 16), sizeof(uint32_t));
     return;
 }
@@ -61,15 +66,15 @@ static inline void matcher_free(matcher_t* matcher) {
 }
 
 static inline uint32_t matcher_getpos(matcher_t* matcher, unsigned char* data, uint32_t pos) {
-    uint32_t context4 = *(uint32_t*)(data + pos - 4);
-    uint32_t lzpos[3] = {
-        matcher->m_lzp8[M_hash8_(data + pos - 8)] & 0xffffffff,
-        matcher->m_lzp4[M_hash4_(data + pos - 4)] & 0xffffffff,
-        matcher->m_lzp2[M_hash2_(data + pos - 2)],
+    matcher_poschk_t x[2] = {
+        matcher->m_lzp8[M_hash8_(data + pos - 8)],
+        matcher->m_lzp4[M_hash4_(data + pos - 4)],
     };
-    if(matcher->m_lzp8[M_hash8_(data + pos - 8)] >> 32 == context4 && lzpos[0] != 0) return lzpos[0];
-    if(matcher->m_lzp4[M_hash4_(data + pos - 4)] >> 32 == context4 && lzpos[1] != 0) return lzpos[1];
-    return lzpos[2];
+    uint16_t context2 = *(uint16_t*)(data + pos - 3); /* .....HH. */
+
+    if(x[0].m_chk == context2) return x[0].m_pos;
+    if(x[1].m_chk == context2) return x[1].m_pos;
+    return matcher->m_lzp2[M_hash2_(data + pos - 2)];
 }
 
 static inline uint32_t matcher_lookup(matcher_t* matcher, unsigned char* data, uint32_t pos) {
@@ -84,11 +89,13 @@ static inline uint32_t matcher_lookup(matcher_t* matcher, unsigned char* data, u
 }
 
 static inline void matcher_update(matcher_t* matcher, unsigned char* data, uint32_t pos, int encode) {
-    uint32_t context4 = *(uint32_t*)(data + pos - 4);
+    uint16_t context2 = *(uint16_t*)(data + pos - 3); /* .....HH. */
 
     if(pos >= 8) { /* avoid overflow */
-        matcher->m_lzp8[M_hash8_(data + pos - 8)] = pos | (uint64_t)context4 << 32;
-        matcher->m_lzp4[M_hash4_(data + pos - 4)] = pos | (uint64_t)context4 << 32;
+        matcher->m_lzp8[M_hash8_(data + pos - 8)].m_chk = context2;
+        matcher->m_lzp4[M_hash4_(data + pos - 4)].m_chk = context2;
+        matcher->m_lzp8[M_hash8_(data + pos - 8)].m_pos = pos;
+        matcher->m_lzp4[M_hash4_(data + pos - 4)].m_pos = pos;
         matcher->m_lzp2[M_hash2_(data + pos - 2)] = pos;
     }
 
@@ -96,7 +103,7 @@ static inline void matcher_update(matcher_t* matcher, unsigned char* data, uint3
     if(encode) {
         __builtin_prefetch(matcher->m_lzp8 + M_hash8_(data + pos - 6), 1, 3);
         __builtin_prefetch(matcher->m_lzp4 + M_hash4_(data + pos - 2), 1, 3);
-        __builtin_prefetch(matcher->m_lzp2 + M_hash2_(data + pos + 0), 1, 3);
+        __builtin_prefetch(matcher->m_lzp2 + M_hash2_(data + pos - 0), 1, 3);
     } else {
         __builtin_prefetch(matcher->m_lzp8 + M_hash8_(data + pos - 7), 1, 3);
         __builtin_prefetch(matcher->m_lzp4 + M_hash4_(data + pos - 3), 1, 3);
