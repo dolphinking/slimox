@@ -2,7 +2,7 @@
 Introduction
 ============
 
-Slimox is another experimental lossless data compression program, based on PPM model and LZP dictionary coding.
+Slimox is another experimental lossless data compression program (with simple archiver support), based on PPM model and LZP dictionary coding.
 
 ------
 
@@ -31,14 +31,12 @@ Here is a simple benchmark with __bible.txt__, compared with gzip and bzip2.
  <tr><td>slimox (20130316)</td>   <td>776954</td>      <td>1.83s</td>           <td>1.92s</td></tr>
 </table>
 
-Build and Run
-=============
+Build
+=====
 
 You can simply use `make` to automatically build the whole project. You can also compile each .c source with `gcc -msse2 -O3`.
 
-Usage:
+Run
+===
 
-compress a file:        `bin/slimox e <fi> <fo>` <br />
-decompress a file:      `bin/slimox d <fi> <fo>` <br />
-compress a directory:   `bin/slimox e <path> <fo>` <br />
-decompress a directory: `bin/slimox d <fi> <path>` <br />
+Run ./bin/slimox under project directory to see a detail usage of slimox.
