@@ -84,24 +84,13 @@ typedef struct ppm_model_t {
     struct allocator_t*  m_o4_allocator;
     uint8_t m_sse_ch_context;
     uint8_t m_sse_last_esc;
-    struct see_model_t m_binsee[65536];
-    struct see_model_t m_see[65536];
+    struct see_model_t m_see[131072];
     struct see_model_t m_see_01;
     struct see_model_t m_see_10;
 } ppm_model_t;
 
 static inline ppm_model_t* ppm_model_new() {
-    static const int binsee_init[64][2] = {
-        {200, 199}, {200,  59}, {200,  90}, {200, 168}, {200,  22}, {200,  40}, {200,  60}, {200,  70},
-        {200,   5}, {200,  15}, {200,  37}, {200,  40}, {200,   4}, {200,   9}, {200,  19}, {200,  22},
-        {200,   4}, {200,   5}, {200,  11}, {200,  12}, {200,   3}, {200,   4}, {200,   6}, {200,   6},
-        {200,   1}, {200,   2}, {200,   3}, {200,   3}, {200,   1}, {200,   3}, {200,   3}, {200,   3},
-        {200, 199}, {200, 152}, {157, 200}, {144, 200}, {200,  51}, {200, 102}, {200, 130}, {200, 116},
-        {200,   8}, {200,  19}, {200,  86}, {200,  87}, {200,  11}, {200,  11}, {200,  59}, {200,  58},
-        {200,   6}, {200,   9}, {200,  42}, {200,  43}, {200,  10}, {200,   8}, {200,  30}, {200,  32},
-        {200,  11}, {200,   7}, {200,  24}, {200,  28}, {200,  28}, {200,  19}, {200,  40}, {200,  28},
-    };
-    static const int see_init[64][2] = {
+    static const int see_init[128][2] = {
         {200, 199}, {200, 115}, {200, 199}, {200, 199}, {200, 199}, {200,  56}, {200,  93}, {200, 199},
         {200, 199}, {200,  29}, {200,  48}, {200,  93}, {200, 199}, {200,  13}, {200,  25}, {200,  46},
         {200, 199}, {200,   6}, {200,  14}, {200,  24}, {200, 199}, {200,   3}, {200,   3}, {200,   8},
@@ -110,6 +99,15 @@ static inline ppm_model_t* ppm_model_new() {
         {200, 199}, {200,  51}, {200,  80}, {200, 167}, {200, 199}, {200,  33}, {200,  42}, {200, 102},
         {200, 199}, {200,  20}, {200,  23}, {200,  54}, {200, 199}, {200,  11}, {200,  12}, {200,  23},
         {200, 199}, {200,  12}, {200,   7}, {200,  13}, {200, 199}, {200, 175}, {200,  17}, {200,   9},
+
+        {200, 199}, {200,  59}, {200,  90}, {200, 168}, {200,  22}, {200,  40}, {200,  60}, {200,  70},
+        {200,   5}, {200,  15}, {200,  37}, {200,  40}, {200,   4}, {200,   9}, {200,  19}, {200,  22},
+        {200,   4}, {200,   5}, {200,  11}, {200,  12}, {200,   3}, {200,   4}, {200,   6}, {200,   6},
+        {200,   1}, {200,   2}, {200,   3}, {200,   3}, {200,   1}, {200,   3}, {200,   3}, {200,   3},
+        {200, 199}, {200, 152}, {157, 200}, {144, 200}, {200,  51}, {200, 102}, {200, 130}, {200, 116},
+        {200,   8}, {200,  19}, {200,  86}, {200,  87}, {200,  11}, {200,  11}, {200,  59}, {200,  58},
+        {200,   6}, {200,   9}, {200,  42}, {200,  43}, {200,  10}, {200,   8}, {200,  30}, {200,  32},
+        {200,  11}, {200,   7}, {200,  24}, {200,  28}, {200,  28}, {200,  19}, {200,  40}, {200,  28},
     };
     int context_hi;
     int context_lo;
@@ -125,10 +123,8 @@ static inline ppm_model_t* ppm_model_new() {
     model->m_o4_allocator = allocator_new();
     model->m_o2_allocator = allocator_new();
     model->m_sse_ch_context = 0;
-    for(context_hi = 0; context_hi < 64; context_hi++) {
+    for(context_hi = 0; context_hi < 128; context_hi++) {
         for(context_lo = 0; context_lo < 1024; context_lo++) {
-            model->m_binsee[context_hi << 10 | context_lo].m_c[0] = binsee_init[context_hi][0];
-            model->m_binsee[context_hi << 10 | context_lo].m_c[1] = binsee_init[context_hi][1];
             model->m_see[context_hi << 10 | context_lo].m_c[0] = see_init[context_hi][0];
             model->m_see[context_hi << 10 | context_lo].m_c[1] = see_init[context_hi][1];
         }
@@ -185,7 +181,8 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
         context |= min2(__fast_log2(lowcnt / 2), 3) << 10;
         context |= min2(__fast_log2(o4->m_sum / 3), 7) << 12;
         context |= model->m_sse_last_esc << 15;
-        return &model->m_binsee[context];
+        context |= 1 << 16;
+        return &model->m_see[context];
     } else {
         /* QUANTIZE = (last_esc[1] | sum[3] | curcnt[2] | lowsum[1] | (lowcnt - curcnt)[3] | previous symbols[6]) */
         context |= ((model->m_context >>  6) & 0x03);
@@ -196,6 +193,7 @@ static inline see_model_t* __ppm_see_context_o4(ppm_model_t* model, o4_context_t
         context |= min2(__fast_log2(curcnt / 2), 3) << 10;
         context |= min2(__fast_log2(o4->m_sum / 8), 7) << 12;
         context |= model->m_sse_last_esc << 15;
+        context |= 0 << 16;
         return &model->m_see[context];
     }
     return NULL;
