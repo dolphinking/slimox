@@ -26,18 +26,64 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+#include <pthread.h>
 #include <stdio.h>
 #include "slimox-ppm.h"
 #include "slimox-buf.h"
 #include "slimox-match.h"
 
+/* pthread-callback wrapper */
+typedef struct lzmatch_thread_param_pack_t {
+    matcher_t* m_matcher;
+    buf_t*     m_ib;
+    int*       m_mlen;
+    int*       m_mpos;
+} lzmatch_thread_param_pack_t;
+
+#define MLEN_SIZE 64000
+
+static inline void* lzmatch_thread(lzmatch_thread_param_pack_t* args) { /* thread for finding matches */
+    uint32_t match_len;
+    uint32_t mpos = args->m_mpos[0];
+    uint32_t midx = 0;
+    uint32_t i;
+
+    while(mpos < args->m_ib->m_size && midx < MLEN_SIZE) {
+        match_len = 1;
+        if(mpos > 16 && mpos + 512 < args->m_ib->m_size) { /* find a match -- avoid overflow */
+            match_len = matcher_lookup(args->m_matcher, args->m_ib->m_data, mpos);
+            if(match_len < match_min) {
+                match_len = 1;
+            }
+            for(i = 0; i < match_len; i++) {
+                matcher_update(args->m_matcher, args->m_ib->m_data, mpos + i, 1);
+            }
+        }
+        mpos += match_len;
+        args->m_mlen[midx++] = match_len;
+    }
+
+    if(midx < MLEN_SIZE) { /* put an END flag */
+        args->m_mlen[midx++] = 0;
+    }
+    args->m_mpos[0] = mpos;
+    return NULL;
+}
 int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
+
     int outsize = 0;
     int pos = 0;
     int match_len;
     int i;
     int counts[256] = {0};
     int escape = 0;
+
+    pthread_t thread;
+    lzmatch_thread_param_pack_t thread_args;
+    int mlen[2][MLEN_SIZE];
+    int midx = 0;
+    int mpos = 0;
+    int mselect = 0;
 
     matcher_t matcher;
     rc_coder_t coder;
@@ -60,11 +106,24 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
     /* start encoding */
     matcher_init(&matcher);
     rc_enc_init(&coder);
+
+    /* start thread (matching first block) */
+    thread_args.m_mpos = &mpos;
+    thread_args.m_ib = ib;
+    thread_args.m_matcher = &matcher;
+    thread_args.m_mlen = mlen[0]; pthread_create(&thread, 0, (void*)lzmatch_thread, &thread_args); pthread_join(thread, 0);
+    thread_args.m_mlen = mlen[1]; pthread_create(&thread, 0, (void*)lzmatch_thread, &thread_args);
+
     while(pos < ib->m_size) {
-        match_len = 1;
-        if(pos > 8 && pos < ib->m_size - 256) { /* avoid overflow */
-            match_len = matcher_lookup(&matcher, ib->m_data, pos);
+        /* find match */
+        if(midx >= MLEN_SIZE) { /* start the next matching thread */
+            pthread_join(thread, 0);
+            thread_args.m_mlen = mlen[mselect];
+            pthread_create(&thread, 0, (void*)lzmatch_thread, &thread_args);
+            midx = 0;
+            mselect = 1 - mselect;
         }
+        match_len = mlen[mselect][midx++];
 
         if(match_len >= match_min) { /* encode a match */
             ppm_encode(ppm, &coder, escape, ;; buf_append(ob, output));
@@ -81,13 +140,12 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
             }
         }
         for(i = 0; i < match_len; i++) { /* update context */
-            matcher_update(&matcher, ib->m_data, pos, 1);
             ppm->m_context <<= 8;
             ppm->m_context |= ib->m_data[pos];
             pos++;
         }
 
-        if(fout_sync && ob->m_size > 16384) {
+        if(fout_sync && ob->m_size > 32000) {
             if(fout_sync) {
                 fwrite(ob->m_data, 1, ob->m_size, fout_sync); /* sync to file */
                 outsize += ob->m_size;
@@ -96,6 +154,7 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
             fprintf(stderr, "%d => %d\r", pos, outsize);
         }
     }
+    pthread_join(thread, 0);
     matcher_free(&matcher);
     rc_enc_flush(&coder, buf_append(ob, output));
 

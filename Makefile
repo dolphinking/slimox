@@ -1,5 +1,5 @@
 CFLAGS =  -Wall -g3 -O3 -mmmx -msse -msse2 -fno-strict-aliasing
-LDFLAGS = -Wall -g3 -O3 -mmmx -msse -msse2
+LDFLAGS = -Wall -g3 -O3 -mmmx -msse -msse2 -lpthread
 
 SRCDIR:= src
 BINDIR:= bin

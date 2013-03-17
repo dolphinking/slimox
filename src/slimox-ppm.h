@@ -390,6 +390,7 @@ static inline o4_context_t* __o4_context_node(ppm_model_t* model) {
         }
     } else { /* not found -- create new node for context */
         o4 = allocator_alloc(model->m_o4_allocator, sizeof(o4_context_t), 8192);
+        memset(o4->m_symbols, 0, sizeof(o4->m_symbols));
         o4->m_context = model->m_context;
         o4->m_sum = 0;
         o4->m_cnt = 0;

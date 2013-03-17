@@ -28,9 +28,9 @@
  */
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include "slimox-ppm.h"
 #include "slimox-buf.h"
 
@@ -79,7 +79,12 @@ int main(int argc, char** argv) {
     ppm_model_t* ppm = ppm_model_new();
     buf_t* ib = buf_new();
     buf_t* ob = buf_new();
-    clock_t timer_start = clock();
+    struct timeval time_start;
+    struct timeval time_end;
+    double cost_time;
+
+    /* timer start */
+    gettimeofday(&time_start, NULL);
 
 #if defined(_WIN32) || defined(_WIN64)
     /* we need to set stdin/stdout to binary mode under windows */
@@ -144,9 +149,13 @@ int main(int argc, char** argv) {
         }
         src_size = ftell(fi);
         dst_size = ftell(fo);
-        fprintf(stderr, "%d => %d in %.2lfs\n", src_size, dst_size, (double)(clock() - timer_start) / CLOCKS_PER_SEC);
         fclose(fi);
         fclose(fo);
+
+        /* timer end */
+        gettimeofday(&time_end, NULL);
+        cost_time = (time_end.tv_sec - time_start.tv_sec) + (time_end.tv_usec - time_start.tv_usec) / 1000000.0;
+        fprintf(stderr, "%d => %d in %.2lfs\n", src_size, dst_size, cost_time);
     }
     if(argc == 4 && strcmp(argv[1], "d") == 0) { /* decompress single file */
         operation = OPERATION_DECOMP;
@@ -171,9 +180,13 @@ int main(int argc, char** argv) {
         }
         src_size = ftell(fi);
         dst_size = ftell(fo);
-        fprintf(stderr, "%d <= %d in %.2lfs\n", dst_size, src_size, (double)(clock() - timer_start) / CLOCKS_PER_SEC);
         fclose(fi);
         fclose(fo);
+
+        /* timer end */
+        gettimeofday(&time_end, NULL);
+        cost_time = (time_end.tv_sec - time_start.tv_sec) + (time_end.tv_usec - time_start.tv_usec) / 1000000.0;
+        fprintf(stderr, "%d <= %d in %.2lfs\n", dst_size, src_size, cost_time);
     }
 
 SlimoxMain_final:

@@ -84,23 +84,25 @@ static inline uint32_t matcher_lookup(matcher_t* matcher, unsigned char* data, u
 }
 
 static inline void matcher_update(matcher_t* matcher, unsigned char* data, uint32_t pos, int encode) {
-    uint32_t context4 = *(uint32_t*)(data + pos - 4);
+    uint32_t context4;
 
-    if(pos >= 8) { /* avoid overflow */
+    if(pos >= 12) { /* avoid overflow */
+        context4 = *(uint32_t*)(data + pos - 4);
+
         matcher->m_lzp8[M_hash8_(data + pos - 8)] = pos | (uint64_t)context4 << 32;
         matcher->m_lzp4[M_hash4_(data + pos - 4)] = pos | (uint64_t)context4 << 32;
         matcher->m_lzp2[M_hash2_(data + pos - 2)] = pos;
-    }
 
-    /* prefetch for next round */
-    if(encode) {
-        __builtin_prefetch(matcher->m_lzp8 + M_hash8_(data + pos - 6), 1, 3);
-        __builtin_prefetch(matcher->m_lzp4 + M_hash4_(data + pos - 2), 1, 3);
-        __builtin_prefetch(matcher->m_lzp2 + M_hash2_(data + pos + 0), 1, 3);
-    } else {
-        __builtin_prefetch(matcher->m_lzp8 + M_hash8_(data + pos - 7), 1, 3);
-        __builtin_prefetch(matcher->m_lzp4 + M_hash4_(data + pos - 3), 1, 3);
-        __builtin_prefetch(matcher->m_lzp2 + M_hash2_(data + pos - 1), 1, 3);
+        /* prefetch for next round */
+        if(encode) {
+            __builtin_prefetch(matcher->m_lzp8 + M_hash8_(data + pos - 6), 1, 3);
+            __builtin_prefetch(matcher->m_lzp4 + M_hash4_(data + pos - 2), 1, 3);
+            __builtin_prefetch(matcher->m_lzp2 + M_hash2_(data + pos + 0), 1, 3);
+        } else {
+            __builtin_prefetch(matcher->m_lzp8 + M_hash8_(data + pos - 7), 1, 3);
+            __builtin_prefetch(matcher->m_lzp4 + M_hash4_(data + pos - 3), 1, 3);
+            __builtin_prefetch(matcher->m_lzp2 + M_hash2_(data + pos - 1), 1, 3);
+        }
     }
     return;
 }
