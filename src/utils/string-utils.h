@@ -84,7 +84,7 @@ static inline string_t* str_new() {
     string_t* str;
 
     if((str = malloc(sizeof(string_t))) != NULL) {
-        if((str->str = malloc(1)) != NULL) {
+        if((str->str = malloc(4)) != NULL) {
             str->str[0] = 0;
             str->len = 0;
             str->capacity = 1;
@@ -101,10 +101,10 @@ static inline string_t* str_new_with(const char* s) {
     size_t slen = strlen(s);
 
     if((str = malloc(sizeof(string_t))) != NULL) {
-        if((str->str = malloc(slen + 1)) != NULL) {
+        if((str->str = malloc(slen + 4)) != NULL) {
             strcpy(str->str, s);
             str->len = slen;
-            str->capacity = slen + 1;
+            str->capacity = slen + 4;
             return str;
         }
         free(str);
@@ -123,11 +123,11 @@ static inline void str_assign(string_t* str, const char* s) {
     char* newp;
     size_t slen = strlen(s);
 
-    if((newp = realloc(str->str, slen + 1)) != NULL) {
+    if((newp = realloc(str->str, slen + 4)) != NULL) {
         str->str = newp;
         strcpy(str->str, s);
         str->len = slen;
-        str->capacity = slen + 1;
+        str->capacity = slen + 4;
         return;
     }
     STRING_UTILS_ON_ALLOC_FAIL();
@@ -147,7 +147,7 @@ static inline void str_concat_str(string_t* str, const char* s) {
     size_t slen = strlen(s);
 
     if(str->len + slen + 1 > str->capacity) {
-        newcapacity = str->len * 2 + slen + 1;
+        newcapacity = str->len * 2 + slen + 4;
         if((newp = realloc(str->str, newcapacity)) != NULL) {
             str->capacity = newcapacity;
             str->str = newp;
@@ -166,7 +166,7 @@ static inline void str_concat_chr(string_t* str, int c) {
     void*  newp;
 
     if(str->len + 2 > str->capacity) {
-        newcapacity = str->len * 2 + 2;
+        newcapacity = str->len * 2 + 4;
         if((newp = realloc(str->str, newcapacity)) != NULL) {
             str->capacity = newcapacity;
             str->str = newp;
@@ -256,7 +256,7 @@ static inline void str_replace_range(string_t* str, size_t from, size_t to, cons
     void*  newp;
 
     if(str->len + newlen - oldlen + 1 > str->capacity) {
-        newcapacity = str->len * 2 + newlen - oldlen + 1;
+        newcapacity = str->len * 2 + newlen - oldlen + 4;
         if((newp = realloc(str->str, newcapacity)) != NULL) {
             str->capacity = newcapacity;
             str->str = newp;
@@ -282,9 +282,8 @@ static inline int str_sprintf(string_t* str, const char* format, ...) {
     ret = vsnprintf(str->str, str->capacity, format, args[0]);
     va_end(args[0]);
 
-    if((newcapacity = ret + 1) > str->capacity) {
+    if((newcapacity = ret + 4) > str->capacity) {
         if((newp = realloc(str->str, newcapacity)) != NULL) {
-            str->len = newcapacity - 1;
             str->capacity = newcapacity;
             str->str = newp;
 
@@ -296,6 +295,8 @@ static inline int str_sprintf(string_t* str, const char* format, ...) {
             return -1;
         }
     }
+    str->len = strlen(str->str);
+
     va_end(args[0]);
     return ret;
 }
@@ -323,11 +324,11 @@ static inline int __str_test() {
 
     fprintf(stderr, "test str_new_with()...\n"); {
         s1 = str_new_with("test1");
-        s2 = str_new_with("test2");
+        s2 = str_new_with("");
         assert(s1->len == strlen(s1->str));
         assert(s2->len == strlen(s2->str));
         assert(strcmp(s1->str, "test1") == 0);
-        assert(strcmp(s2->str, "test2") == 0);
+        assert(strcmp(s2->str, "") == 0);
         str_del(s1);
         str_del(s2);
     }

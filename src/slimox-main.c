@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
     while(argc > 1 && sscanf(argv[1], "-%c", &option) > 0) {
         if(option == 'q') { /* quiet mode */
             fclose(stderr);
-            memcpy(&argv[1], &argv[2], (--argc) * sizeof(*argv));
+            memmove(&argv[1], &argv[2], (--argc) * sizeof(*argv));
             continue;
         }
         if(option == 'b') { /* set blocksize */
@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "error: Invalid blocksize\n");
                 exit(-1);
             }
-            memcpy(&argv[1], &argv[2], (--argc) * sizeof(*argv));
+            memmove(&argv[1], &argv[2], (--argc) * sizeof(*argv));
             continue;
         }
         fprintf(stderr, "error: Invalid argument\n");

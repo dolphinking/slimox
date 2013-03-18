@@ -32,9 +32,11 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <assert.h>
 
 #include "slimox-ppm.h"
 #include "slimox-buf.h"
+#include "utils/string-utils.h"
 
 #define FILENAME_MAXLEN 32768
 
@@ -51,268 +53,382 @@ static inline FILE* tmpfile_mingw() {
     GetTempFileName(".", NULL, 0, filename);
     return fopen(filename,"w+bTD");
 }
-
-static inline const char* __path(const char* path) {
-    static char newpath[FILENAME_MAXLEN + 1];
-    char* p;
-
-    strcpy(newpath, path);
-    for(p = newpath; *p != '\0'; p++) {
-        if(*p == '\x2f') {
-            *p = '\x5c';
-        }
-    }
-    if(*--p == '\\') {
-        *p = 0;
-    }
-    return newpath;
-}
+#define PATH_SEP    "\x5c"
+#define PATH_JOINER "%s\x5c%s"
 
 #else /* non-windows */
-#define __path(_1) _1
+#define PATH_SEP    "\x2f"
+#define PATH_JOINER "%s\x2f%s"
 #endif
-
-
 
 extern int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync);
 extern int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm);
 
-static int traverse_directory_make_header(const char* path, const char* root, FILE* outstream) {
-    char fullpath[FILENAME_MAXLEN + 1];
-    char rootpath[FILENAME_MAXLEN + 1];
-    DIR* dir;
-    struct dirent* item;
-    struct stat st;
+/* represent a file item (regular file or directory) */
+struct file_item {
+    uint32_t  m_mode;
+    uint32_t  m_size;
+    string_t* m_path_to_root;
+};
 
-    /* write file information of root dir */
-    if(*root) {
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, root);
-    } else {
-        snprintf(fullpath, sizeof(fullpath), "%s", path);
+/* operations to a file item struct */
+static inline int file_item_from_path(struct file_item* item, const string_t* full_path, const string_t* root_path) {
+    struct stat statbuf;
+
+    if(stat(full_path->str, &statbuf) != -1 && (S_ISREG(statbuf.st_mode) || S_ISDIR(statbuf.st_mode))) {
+        if(S_ISDIR(statbuf.st_mode)) {
+            statbuf.st_size = 0;
+        }
+        item->m_mode = statbuf.st_mode;
+        item->m_size = statbuf.st_size;
+        str_assign(item->m_path_to_root, root_path->str);
+        return 1;
     }
-    if(lstat(__path(fullpath), &st) == -1) {
-        fprintf(stderr, "warning: ignore file '%s': stat failed.\n", __path(fullpath));
+    return 0;
+}
+static inline struct file_item* file_item_new() {
+    struct file_item* item = malloc(sizeof(struct file_item));
+    item->m_mode = 0;
+    item->m_size = 0;
+    item->m_path_to_root = str_new();
+    return item;
+}
+static inline void file_item_del(struct file_item* item) {
+    str_del(item->m_path_to_root);
+    free(item);
+    return;
+}
+
+static inline void file_item_put(struct file_item* item, FILE* fp) {
+    size_t i;
+
+    fwrite(&item->m_mode, sizeof(item->m_mode), 1, fp);
+    fwrite(&item->m_size, sizeof(item->m_size), 1, fp);
+    fwrite(&item->m_path_to_root->len, sizeof(item->m_path_to_root->len), 1, fp);
+
+    for(i = 0; i < item->m_path_to_root->len; i++) {
+        if(item->m_path_to_root->str[i] == PATH_SEP[0]) { /* replace path seperator with 0 */
+            fputc(0, fp);
+        } else {
+            fputc(item->m_path_to_root->str[i], fp);
+        }
+    }
+    return;
+}
+static inline void file_item_get(struct file_item* item, FILE* fp) {
+    size_t len;
+    size_t i;
+    int c;
+
+    fread(&item->m_mode, sizeof(item->m_mode), 1, fp);
+    fread(&item->m_size, sizeof(item->m_size), 1, fp);
+    fread(&len, sizeof(item->m_path_to_root->len), 1, fp);
+
+    str_assign(item->m_path_to_root, "");
+    for(i = 0; i < len; i++) {
+        if((c = getc(fp)) == 0) { /* replace 0 with path seperator */
+            str_concat_chr(item->m_path_to_root, PATH_SEP[0]);
+        } else {
+            str_concat_chr(item->m_path_to_root, c);
+        }
+    }
+    return;
+}
+
+static inline void formalize_path(string_t* path) {
+    while(path->len > 0 && path->str[path->len - 1] == PATH_SEP[0]) {
+        str_substr(path, 0, path->len - 2);
+    }
+    return;
+}
+
+static int traverse_directory_make_header(const char* path, const char* root, FILE* fp) {
+    string_t* fulldir_path = str_new_with(path);
+    string_t* rootdir_path = str_new_with(root);
+    string_t* full_path;
+    string_t* root_path;
+    struct file_item* item = file_item_new();
+    DIR* dir;
+    struct dirent* dirent;
+
+    formalize_path(fulldir_path);
+    formalize_path(rootdir_path);
+
+    /* write file item of root directory */
+    if(!file_item_from_path(item, fulldir_path, rootdir_path)) {
+        fprintf(stderr, "warning: cannot stat '%s'.\n", fulldir_path->str);
+        file_item_del(item);
+        str_del(fulldir_path);
+        str_del(rootdir_path);
         return -1;
     }
-    fprintf(outstream, "%s//%lx.%lu\n", root, (unsigned long)st.st_mode, 0l);
+    file_item_put(item, fp);
 
     /* open directory */
-    if((dir = opendir(fullpath)) == NULL) {
-        fprintf(stderr, "warning: open directory '%s' failed.\n", fullpath);
+    if((dir = opendir(fulldir_path->str)) == NULL) {
+        fprintf(stderr, "warning: cannot open directory '%s'.\n", fulldir_path->str);
+        file_item_del(item);
+        str_del(fulldir_path);
+        str_del(rootdir_path);
         return -1;
     }
 
-    /* traverse directory */
-    while((item = readdir(dir)) != NULL) {
-        if(strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0) {
+    full_path = str_new();
+    root_path = str_new();
+    while((dirent = readdir(dir)) != NULL) {
+        if(strcmp(dirent->d_name, ".") == 0 || strcmp(dirent->d_name, "..") == 0) {
             continue;
         }
+        str_sprintf(full_path, PATH_JOINER, fulldir_path->str, dirent->d_name); /* reach a sub file/dir */
+        str_sprintf(root_path, PATH_JOINER, rootdir_path->str, dirent->d_name);
 
-        /* construct fullpath */
-        if(strlen(path) + 1 + strlen(root) + 1 + strlen(item->d_name) > FILENAME_MAXLEN) {
-            fprintf(stderr, "warning: ignore file '%s/%s': filename too long.\n", path, item->d_name);
+        if(!file_item_from_path(item, full_path, root_path)) { /* get file item */
+            fprintf(stderr, "warning: cannot stat '%s'.\n", full_path->str);
             continue;
         }
-        snprintf(fullpath, sizeof(fullpath), "%s/%s/%s", path, root, item->d_name);
-        snprintf(rootpath, sizeof(rootpath), "%s/%s", root, item->d_name);
-
-        /* stat */
-        if(lstat(__path(fullpath), &st) == -1) {
-            fprintf(stderr, "warning: ignore file '%s/%s': stat failed.\n", path, item->d_name);
-            continue;
+        if(S_ISREG(item->m_mode)) { /* write file item of a file */
+            file_item_put(item, fp);
         }
-        if(!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode)) {
-            fprintf(stderr, "warning: ignore file '%s/%s': not a regular file.\n", path, item->d_name);
-            continue;
-        }
-
-        /* write file item information */
-        if(S_ISREG(st.st_mode)) {
-            fprintf(outstream, "%s//%lx.%lu\n", rootpath, (unsigned long)st.st_mode, (unsigned long)st.st_size);
-        } else {
-            traverse_directory_make_header(path, rootpath, outstream);
+        if(S_ISDIR(item->m_mode)) { /* traverse into a sub directory */
+            traverse_directory_make_header(full_path->str, root_path->str, fp);
         }
     }
+    file_item_del(item);
     closedir(dir);
+
+    str_del(full_path);
+    str_del(root_path);
+    str_del(fulldir_path);
+    str_del(rootdir_path);
+    return 0;
+}
+
+static inline int encode_block(buf_t* ib, ppm_model_t* ppm, FILE* fout) {
+    buf_t* ob = buf_new();
+    size_t pos_sync;
+    size_t out_size;
+
+    /* put block header */
+    pos_sync = ftell(fout);
+    if(fwrite(&ob->m_size, sizeof(ob->m_size), 1, fout) != 1) {
+        buf_del(ob);
+        return -1;
+    }
+
+    /* encode */
+    out_size = slimox_encode(ib, ob, ppm, fout);
+
+    /* rewrite block header */
+    fseek(fout, pos_sync, SEEK_SET);
+    if(fwrite(&out_size, sizeof(ob->m_size), 1, fout) != 1) {
+        buf_del(ob);
+        return -1;
+    }
+    fseek(fout, 0, SEEK_END);
+
+    buf_del(ob);
+    return 0;
+}
+
+static inline int decode_block(buf_t* ob, ppm_model_t* ppm, FILE* fin) {
+    buf_t* ib = buf_new();
+
+    /* read block header */
+    if(fread(&ib->m_size, sizeof(ib->m_size), 1, fin) != 1) {
+        buf_del(ib);
+        return -1;
+    }
+    buf_resize(ib, ib->m_size);
+
+    /* read block data */
+    if(fread(ib->m_data, ib->m_size, 1, fin) != 1) {
+        buf_del(ib);
+        return -1;
+    }
+
+    /* decode */
+    buf_resize(ob, 0);
+    slimox_decode(ib, ob, ppm);
+
+    buf_del(ib);
     return 0;
 }
 
 int pack(const char* path, const char* outfile, ppm_model_t* ppm, int block_size) {
-    FILE* tmpstream;
-    FILE* instream;
-    FILE* outstream;
+    FILE* ftmp;
+    FILE* fin;
+    FILE* fout;
+    struct file_item* item;
+    size_t in_size;
     int c;
-    char filename[FILENAME_MAXLEN + 1];
-    char fullpath[FILENAME_MAXLEN + 1];
-    int len;
-    unsigned long mode;
-    unsigned long size;
-    unsigned long pos_sync;
-    unsigned long in_size;
-    unsigned long out_size;
+    string_t* full_path;
+    string_t* file_path;
     buf_t* ib;
-    buf_t* ob;
 
-    if((outstream = fopen(outfile, "wb")) == NULL) {
-        fprintf(stderr, "error: open '%s' failed.\n", outfile);
+    if((fout = fopen(outfile, "wb")) == NULL) {
+        fprintf(stderr, "error: cannot open '%s'.\n", outfile);
         return -1;
     }
-
-    /* write header into temporary file */
-    if((tmpstream = tmpfile()) == NULL) {
+    if((ftmp = tmpfile()) == NULL) {
         fprintf(stderr, "error: cannot create temporary file.\n");
-        fclose(outstream);
+        fclose(fout);
         return -1;
     }
-    if(traverse_directory_make_header(path, "", tmpstream) == -1) {
-        fprintf(stderr, "error: open root directory '%s' failed.\n", path);
-        fclose(outstream);
+
+    /* write items into temporary file */
+    if(traverse_directory_make_header(path, "", ftmp) == -1) {
+        fprintf(stderr, "error: cannot open root directory '%s'.\n", path);
+        fclose(ftmp);
+        fclose(fout);
         return -1;
     }
-    putc(0, tmpstream); /* End-of-Header */
-    rewind(tmpstream);
+    fprintf(stderr, "packing directory %s to %s...\n", path, outfile);
 
-    /* dump header to outstream */
-    while((c = getc(tmpstream)) != EOF) {
-        putc(c, outstream);
+    item = file_item_new();
+    item->m_mode = -1;
+    item->m_size = -1;
+    file_item_put(item, ftmp);
+    file_item_del(item);
+
+    /* copy items to out file */
+    rewind(ftmp);
+    while((c = fgetc(ftmp)) != EOF) {
+        fputc(c, fout);
     }
-    fflush(outstream);
-    rewind(tmpstream);
 
+    full_path = str_new_with(path);
+    file_path = str_new();
+    formalize_path(full_path);
+
+    item = file_item_new();
     ib = buf_new();
-    ob = buf_new();
     buf_resize(ib, block_size);
+    ib->m_size = 0;
 
-    /* scan file list and compress data */
-    while(ungetc(getc(tmpstream), tmpstream) != 0) {
-        len = 0;
-        while(len < 2 || (filename[len - 1] != '/' || filename[len - 2] != '/')) {
-            filename[len++] = getc(tmpstream);
-        }
-        filename[--len] = 0;
-        filename[--len] = 0;
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, filename);
-        fscanf(tmpstream, "%lx.%lu\n", &mode, &size);
+    /* compress file to out file */
+    rewind(ftmp);
+    while(file_item_get(item, ftmp), item->m_size != -1) {
+        if(S_ISREG(item->m_mode)) {
+            str_sprintf(file_path, PATH_JOINER, full_path->str, item->m_path_to_root->str);
 
-        /* compress a regular file */
-        if(S_ISREG(mode)) {
-            if((instream = fopen(fullpath, "rb")) == NULL) {
-                fprintf(stderr, "error: open file '%s' failed.\n", fullpath);
-                break;
+            if((fin = fopen(file_path->str, "rb")) == NULL) {
+                fprintf(stderr, "warning: cannot open '%s'.\n", file_path->str);
+                continue;
             }
 
-            fprintf(stderr, "compressing %s...\n", fullpath);
-            in_size = 0;
-            while((ib->m_size = fread(ib->m_data, 1, ib->m_capacity, instream)) > 0) {
-                pos_sync = ftell(outstream);
-                buf_resize(ob, 0);
-                fwrite(&ob->m_size, sizeof(ob->m_size), 1, outstream);
-
-                /* compress */
-                in_size += ib->m_size;
-                out_size = slimox_encode(ib, ob, ppm, outstream);
-
-                /* write back out_size */
-                fseek(outstream, pos_sync, SEEK_SET);
-                fwrite(&out_size, sizeof(ob->m_size), 1, outstream);
-                fseek(outstream, 0, SEEK_END);
+            while((in_size = fread(ib->m_data + ib->m_size, 1, ib->m_capacity - ib->m_size, fin)) > 0) {
+                if((ib->m_size += in_size) == ib->m_capacity) {
+                    if(encode_block(ib, ppm, fout) == -1) {
+                        fprintf(stderr, "error: encode failed.\n");
+                        ib->m_size = 0;
+                        break;
+                    }
+                    ib->m_size = 0;
+                }
             }
-            fclose(instream);
-
-            if(in_size != size) { /* file size not match, error */
-                fprintf(stderr, "error: '%s' file size changed while compressing.\n", fullpath);
-                break;
+            if(ftell(fin) != item->m_size) { /* file size changed during compression -- connot continue */
+                fprintf(stderr, "error: '%s' file size changed during compression.\n", file_path->str);
+                fclose(fout);
+                file_item_del(item);
+                buf_del(ib);
+                str_del(full_path);
+                str_del(file_path);
+                return -1;
             }
+            fclose(fin);
         }
     }
-    fclose(tmpstream);
-    fclose(outstream);
+    if(ib->m_size > 0) { /* encode last block */
+        if(encode_block(ib, ppm, fout) == -1) {
+            fprintf(stderr, "error: encode failed.\n");
+        }
+    }
+
+    fclose(ftmp);
+    fclose(fout);
+    file_item_del(item);
     buf_del(ib);
-    buf_del(ob);
+    str_del(full_path);
+    str_del(file_path);
     return 0;
 }
 
-
 int unpack(const char* infile, const char* path, ppm_model_t* ppm, int block_size) {
-    FILE* tmpstream;
-    FILE* instream;
-    FILE* outstream;
-    int c;
-    char filename[FILENAME_MAXLEN + 1];
-    char fullpath[FILENAME_MAXLEN + 1];
-    int len;
-    unsigned long mode;
-    unsigned long size;
-    unsigned long out_size;
-    struct stat st;
-    buf_t* ib;
+    FILE* ftmp;
+    FILE* fin;
+    FILE* fout;
+    struct file_item* item;
+    int nitems = 0;
+    string_t* full_path;
+    string_t* file_path;
     buf_t* ob;
+    size_t ob_offset = 0;
+    size_t ob_write_size = 0;
 
-    /* open input file */
-    if((instream = fopen(infile, "rb")) == NULL) {
-        fprintf(stderr, "error: open '%s' failed.\n", infile);
+    if((fin = fopen(infile, "rb")) == NULL) {
+        fprintf(stderr, "error: cannot open '%s'.\n", infile);
         return -1;
     }
-
-    /* dump header to tmpstream */
-    if((tmpstream = tmpfile()) == NULL) {
+    if((ftmp = tmpfile()) == NULL) {
         fprintf(stderr, "error: cannot create temporary file.\n");
-        fclose(instream);
+        fclose(fin);
         return -1;
     }
-    while((c = getc(instream)) != 0) {
-        putc(c, tmpstream);
-    }
-    putc(0, tmpstream);
-    rewind(tmpstream);
 
-    ib = buf_new();
+    item = file_item_new();
+    full_path = str_new_with(path);
+    file_path = str_new();
+    formalize_path(full_path);
+
+    /* read items into temporary file */
+    while(file_item_get(item, fin), item->m_size != -1) {
+        file_item_put(item, ftmp);
+        nitems += 1;
+    }
+
+    /* compress file to out file */
     ob = buf_new();
-    buf_resize(ib, block_size);
+    rewind(ftmp);
+    while(nitems > 0) {
+        file_item_get(item, ftmp);
+        nitems -= 1;
+        str_sprintf(file_path, PATH_JOINER, full_path->str, item->m_path_to_root->str);
 
-    /* scan file list and compress data */
-    while(ungetc(getc(tmpstream), tmpstream) != 0) {
-        len = 0;
-        while(len < 2 || (filename[len - 1] != '/' || filename[len - 2] != '/')) {
-            filename[len++] = getc(tmpstream);
-        }
-        filename[--len] = 0;
-        filename[--len] = 0;
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, filename);
-        fscanf(tmpstream, "%lx.%lu\n", &mode, &size);
+        if(S_ISDIR(item->m_mode)) {
+            mkdir(file_path->str, item->m_mode); /* create directory */
 
-        /* create directory */
-        if(S_ISDIR(mode)) {
-            mkdir(__path(fullpath), mode);
-            if(lstat(__path(fullpath), &st) == -1 || !S_ISDIR(st.st_mode)) {
-                fprintf(stderr, "error: cannot create directory '%s'.\n", path);
-                break;
+        } else {
+            if((fout = fopen(file_path->str, "wb")) == NULL) {
+                fprintf(stderr, "warning: cannot open file '%s'.\n", file_path->str);
+                continue;
             }
-        }
-
-        /* compress a regular file */
-        if(S_ISREG(mode)) {
-            if((outstream = fopen(fullpath, "wb")) == NULL) {
-                fprintf(stderr, "error: open '%s' failed.\n", fullpath);
-                break;
+            while(item->m_size > 0) { /* write file */
+                if(ob_offset == ob->m_size) {
+                    ob_offset = 0;
+                    if(decode_block(ob, ppm, fin) == -1) {
+                        fprintf(stderr, "error: decode failed.\n");
+                        fclose(fout);
+                        break;
+                    }
+                }
+                if(item->m_size < ob->m_size - ob_offset) {
+                    ob_write_size = item->m_size;
+                } else {
+                    ob_write_size = ob->m_size - ob_offset;
+                }
+                fwrite(ob->m_data + ob_offset, 1, ob_write_size, fout);
+                item->m_size -= ob_write_size;
+                ob_offset += ob_write_size;
             }
-            fprintf(stderr, "decompressing %s...\n", fullpath);
-            out_size = 0;
-            while(out_size < size && fread(&ib->m_size, sizeof(ib->m_size), 1, instream) > 0) {
-                buf_resize(ib, ib->m_size);
-                buf_resize(ob, 0);
-                fread(ib->m_data, 1, ib->m_size, instream);
-
-                slimox_decode(ib, ob, ppm);
-                fwrite(ob->m_data, 1, ob->m_size, outstream);
-                out_size += ob->m_size;
-            }
-            fclose(outstream);
+            fchmod(fileno(fout), item->m_mode);
+            fclose(fout);
         }
     }
-    fclose(tmpstream);
-    fclose(instream);
-    buf_del(ib);
+
+    fclose(fin);
+    file_item_del(item);
     buf_del(ob);
+    str_del(full_path);
+    str_del(file_path);
     return 0;
 }
