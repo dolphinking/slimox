@@ -154,7 +154,7 @@ static int traverse_directory_make_header(const char* path, const char* root, FI
     formalize_path(fulldir_path);
     formalize_path(rootdir_path);
 
-    /* write file item of root directory */
+    /* write file item of current path */
     if(!file_item_from_path(item, fulldir_path, rootdir_path)) {
         fprintf(stderr, "warning: cannot stat '%s'.\n", fulldir_path->str);
         file_item_del(item);
@@ -164,42 +164,40 @@ static int traverse_directory_make_header(const char* path, const char* root, FI
     }
     file_item_put(item, fp);
 
-    /* open directory */
-    if((dir = opendir(fulldir_path->str)) == NULL) {
-        fprintf(stderr, "warning: cannot open directory '%s'.\n", fulldir_path->str);
-        file_item_del(item);
-        str_del(fulldir_path);
-        str_del(rootdir_path);
-        return -1;
+    /* traverse directory */
+    if(S_ISDIR(item->m_mode)) {
+        if((dir = opendir(fulldir_path->str)) == NULL) {
+            fprintf(stderr, "warning: cannot open directory '%s'.\n", fulldir_path->str);
+            file_item_del(item);
+            str_del(fulldir_path);
+            str_del(rootdir_path);
+            return -1;
+        }
+
+        full_path = str_new();
+        root_path = str_new();
+        while((dirent = readdir(dir)) != NULL) {
+            if(strcmp(dirent->d_name, ".") == 0 || strcmp(dirent->d_name, "..") == 0) {
+                continue;
+            }
+            str_sprintf(full_path, PATH_JOINER, fulldir_path->str, dirent->d_name); /* reach a sub file/dir */
+            str_sprintf(root_path, PATH_JOINER, rootdir_path->str, dirent->d_name);
+
+            if(!file_item_from_path(item, full_path, root_path)) { /* get file item */
+                fprintf(stderr, "warning: cannot stat '%s'.\n", full_path->str);
+                continue;
+            }
+            if(S_ISREG(item->m_mode) || S_ISDIR(item->m_mode)) { /* traverse into a sub directory */
+                traverse_directory_make_header(full_path->str, root_path->str, fp);
+            }
+        }
+        closedir(dir);
+        str_del(full_path);
+        str_del(root_path);
     }
-
-    full_path = str_new();
-    root_path = str_new();
-    while((dirent = readdir(dir)) != NULL) {
-        if(strcmp(dirent->d_name, ".") == 0 || strcmp(dirent->d_name, "..") == 0) {
-            continue;
-        }
-        str_sprintf(full_path, PATH_JOINER, fulldir_path->str, dirent->d_name); /* reach a sub file/dir */
-        str_sprintf(root_path, PATH_JOINER, rootdir_path->str, dirent->d_name);
-
-        if(!file_item_from_path(item, full_path, root_path)) { /* get file item */
-            fprintf(stderr, "warning: cannot stat '%s'.\n", full_path->str);
-            continue;
-        }
-        if(S_ISREG(item->m_mode)) { /* write file item of a file */
-            file_item_put(item, fp);
-        }
-        if(S_ISDIR(item->m_mode)) { /* traverse into a sub directory */
-            traverse_directory_make_header(full_path->str, root_path->str, fp);
-        }
-    }
-    file_item_del(item);
-    closedir(dir);
-
-    str_del(full_path);
-    str_del(root_path);
     str_del(fulldir_path);
     str_del(rootdir_path);
+    file_item_del(item);
     return 0;
 }
 
@@ -310,6 +308,7 @@ int pack(const char* path, const char* outfile, ppm_model_t* ppm, int block_size
     while(file_item_get(item, ftmp), item->m_size != -1) {
         if(S_ISREG(item->m_mode)) {
             str_sprintf(file_path, PATH_JOINER, full_path->str, item->m_path_to_root->str);
+            formalize_path(file_path);
 
             if((fin = fopen(file_path->str, "rb")) == NULL) {
                 fprintf(stderr, "warning: cannot open '%s'.\n", file_path->str);
@@ -393,6 +392,7 @@ int unpack(const char* infile, const char* path, ppm_model_t* ppm, int block_siz
         file_item_get(item, ftmp);
         nitems -= 1;
         str_sprintf(file_path, PATH_JOINER, full_path->str, item->m_path_to_root->str);
+        formalize_path(file_path);
 
         if(S_ISDIR(item->m_mode)) {
             mkdir(file_path->str, item->m_mode); /* create directory */

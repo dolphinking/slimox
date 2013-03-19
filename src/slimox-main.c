@@ -50,10 +50,8 @@ const char* msg_start = (
         " written by Zhang Li <richselian@gmail.com> \n"
         "============================================\n");
 const char* msg_help = (
-        "to pack directory:   slimox [SWITCH] epack [input-dir] [output]\n"
-        "to unpack directory: slimox [SWITCH] dpack [input] [output-dir]\n"
-        "to compress file:    slimox [SWITCH] e [input] [output]\n"
-        "to decompress file:  slimox [SWITCH] d [input] [output]\n"
+        "to encode: slimox [SWITCH] e [input (file/dir)] [output]\n"
+        "to decode: slimox [SWITCH] d [input] [output (file/dir)]\n"
         "\n"
         "optional SWITCH:\n"
         " -q  quiet mode.\n"
@@ -68,14 +66,8 @@ int main(int argc, char** argv) {
         OPERATION_UNPACK,
     } operation = OPERATION_INVALID;
 
-    FILE* fi;
-    FILE* fo;
     char option;
     uint32_t block_size = 16777216; /* 16MB by default */
-    uint32_t out_size;
-    uint32_t src_size = 0;
-    uint32_t dst_size = 0;
-    uint32_t pos_sync;
     ppm_model_t* ppm = ppm_model_new();
     buf_t* ib = buf_new();
     buf_t* ob = buf_new();
@@ -116,80 +108,29 @@ int main(int argc, char** argv) {
 
     /* start! */
     fprintf(stderr, msg_start);
-    if(argc == 4 && strcmp(argv[1], "epack") == 0) { /* pack directory */
+    if(argc == 4 && strcmp(argv[1], "e") == 0) { /* pack directory */
         operation = OPERATION_PACK;
-        pack(argv[2], argv[3], ppm, block_size);
-    }
-    if(argc == 4 && strcmp(argv[1], "dpack") == 0) { /* unpack directory */
-        operation = OPERATION_PACK;
-        unpack(argv[2], argv[3], ppm, block_size);
-    }
-    if(argc == 4 && strcmp(argv[1], "e") == 0) { /* compress single file */
-        operation = OPERATION_COMP;
-        if((fi = fopen(argv[2], "rb")) == NULL) {
-            fprintf(stderr, "open '%s' failed.\n", argv[2]);
-            goto SlimoxMain_final;
+        if(pack(argv[2], argv[3], ppm, block_size) == -1) {
+            abort();
         }
-        if((fo = fopen(argv[3], "wb")) == NULL) {
-            fprintf(stderr, "open '%s' failed.\n", argv[3]);
-            fclose(fi);
-            goto SlimoxMain_final;
-        }
-        fprintf(stderr, "compressing %s to %s...\n", argv[2], argv[3]);
-
-        while((ib->m_size = fread(ib->m_data, 1, ib->m_capacity, fi)) > 0) {
-            pos_sync = ftell(fo);
-            buf_resize(ob, 0);
-            fwrite(&ob->m_size, sizeof(ob->m_size), 1, fo);
-
-            out_size = slimox_encode(ib, ob, ppm, fo);
-            fseek(fo, pos_sync, SEEK_SET);
-            fwrite(&out_size, sizeof(ob->m_size), 1, fo);
-            fseek(fo, 0, SEEK_END);
-        }
-        src_size = ftell(fi);
-        dst_size = ftell(fo);
-        fclose(fi);
-        fclose(fo);
 
         /* timer end */
         gettimeofday(&time_end, NULL);
         cost_time = (time_end.tv_sec - time_start.tv_sec) + (time_end.tv_usec - time_start.tv_usec) / 1000000.0;
-        fprintf(stderr, "%d => %d in %.2lfs\n", src_size, dst_size, cost_time);
+        fprintf(stderr, "time: %.2lfs\n", cost_time);
     }
-    if(argc == 4 && strcmp(argv[1], "d") == 0) { /* decompress single file */
-        operation = OPERATION_DECOMP;
-        if((fi = fopen(argv[2], "rb")) == NULL) {
-            fprintf(stderr, "open '%s' failed.\n", argv[2]);
-            goto SlimoxMain_final;
+    if(argc == 4 && strcmp(argv[1], "d") == 0) { /* unpack directory */
+        operation = OPERATION_PACK;
+        if(unpack(argv[2], argv[3], ppm, block_size) == -1) {
+            abort();
         }
-        if((fo = fopen(argv[3], "wb")) == NULL) {
-            fprintf(stderr, "open '%s' failed.\n", argv[3]);
-            fclose(fi);
-            goto SlimoxMain_final;
-        }
-        fprintf(stderr, "decompressing %s to %s...\n", argv[2], argv[3]);
-
-        while(fread(&ib->m_size, sizeof(ib->m_size), 1, fi) > 0) {
-            buf_resize(ib, ib->m_size);
-            buf_resize(ob, 0);
-            fread(ib->m_data, 1, ib->m_size, fi);
-
-            slimox_decode(ib, ob, ppm);
-            fwrite(ob->m_data, 1, ob->m_size, fo);
-        }
-        src_size = ftell(fi);
-        dst_size = ftell(fo);
-        fclose(fi);
-        fclose(fo);
 
         /* timer end */
         gettimeofday(&time_end, NULL);
         cost_time = (time_end.tv_sec - time_start.tv_sec) + (time_end.tv_usec - time_start.tv_usec) / 1000000.0;
-        fprintf(stderr, "%d <= %d in %.2lfs\n", dst_size, src_size, cost_time);
+        fprintf(stderr, "time: %.2lfs\n", cost_time);
     }
 
-SlimoxMain_final:
     if(operation == OPERATION_INVALID) { /* bad operation */
         fprintf(stderr, msg_help);
     }
