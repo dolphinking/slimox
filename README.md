@@ -36,13 +36,13 @@ Here is a simple benchmark with __bible.txt__, compared with gzip and bzip2.
  <tr><td>program</td>             <td>size</td>        <td>encode-time</td>         <td>decode-time</td></tr>
  <tr><td>gzip</td>                <td>1191061</td>     <td>0.90s</td>               <td>0.09s</td></tr>
  <tr><td>bzip2</td>               <td>845635</td>      <td>1.73s</td>               <td>0.71s</td></tr>
- <tr><td>slimox (20130319)</td>   <td>776954</td>      <td>1.35s (2 threads)</td>   <td>1.92s</td></tr>
+ <tr><td>slimox (20130319)</td>   <td>776979</td>      <td>1.35s (2 threads)</td>   <td>1.92s</td></tr>
 </table>
 
 Build
 =====
 
-You can simply use `make` to automatically build the whole project. You can also compile each .c source with `gcc -msse2 -O3 -lpthread`.
+You can simply use `make` to automatically build the whole project. You can also compile each .c source with `gcc -msse2 -O3` and link all object file with `gcc -msse2 -O3 -lpthread`.
 
 Run
 ===
