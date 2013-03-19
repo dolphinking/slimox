@@ -280,7 +280,7 @@ int pack(const char* path, const char* outfile, ppm_model_t* ppm, int block_size
         fclose(fout);
         return -1;
     }
-    fprintf(stderr, "packing directory %s to %s...\n", path, outfile);
+    fprintf(stderr, "encoding %s to %s...\n", path, outfile);
 
     item = file_item_new();
     item->m_mode = -1;
@@ -373,6 +373,7 @@ int unpack(const char* infile, const char* path, ppm_model_t* ppm, int block_siz
         fclose(fin);
         return -1;
     }
+    fprintf(stderr, "decoding %s to %s...\n", infile, path);
 
     item = file_item_new();
     full_path = str_new_with(path);
