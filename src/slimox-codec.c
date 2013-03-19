@@ -70,8 +70,8 @@ static inline void* lzmatch_thread(lzmatch_thread_param_pack_t* args) { /* threa
     return NULL;
 }
 int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
-
     int outsize = 0;
+    int percent = 0;
     int pos = 0;
     int match_len;
     int i;
@@ -115,6 +115,11 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
     thread_args.m_mlen = mlen[1]; pthread_create(&thread, 0, (void*)lzmatch_thread, &thread_args);
 
     while(pos < ib->m_size) {
+        if(percent < pos / (ib->m_size / 100 + 1)) {
+            percent = pos / (ib->m_size / 100 + 1);
+            fprintf(stderr, "%d%%\r",percent);
+        }
+
         /* find match */
         if(midx >= MLEN_SIZE) { /* start the next matching thread */
             pthread_join(thread, 0);
@@ -151,7 +156,6 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
                 outsize += ob->m_size;
                 ob->m_size = 0;
             }
-            fprintf(stderr, "%d => %d\r", pos, outsize);
         }
     }
     pthread_join(thread, 0);
@@ -163,7 +167,6 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
         outsize += ob->m_size;
         ob->m_size = 0;
     }
-    fprintf(stderr, "%d => %d\n", pos, outsize);
     return outsize;
 }
 
@@ -192,7 +195,7 @@ int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm) {
     while(ob->m_size < size) {
         if(percent < pos / (ib->m_size / 100 + 1)) {
             percent = pos / (ib->m_size / 100 + 1);
-            fprintf(stderr, "%d <= %d\r", ob->m_size, pos);
+            fprintf(stderr, "%d%%\r",percent);
         }
 
         match_len = 1;
@@ -221,7 +224,6 @@ int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm) {
             match_len--;
         }
     }
-    fprintf(stderr, "%d <= %d\n", ob->m_size, pos);
     matcher_free(&matcher);
     return 0;
 }

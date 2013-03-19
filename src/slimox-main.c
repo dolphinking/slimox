@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
         /* timer end */
         gettimeofday(&time_end, NULL);
         cost_time = (time_end.tv_sec - time_start.tv_sec) + (time_end.tv_usec - time_start.tv_usec) / 1000000.0;
-        fprintf(stderr, "time: %.2lfs\n", cost_time);
+        fprintf(stderr, "encode done in %.2lfsec\n", cost_time);
     }
     if(argc == 4 && strcmp(argv[1], "d") == 0) { /* unpack directory */
         operation = OPERATION_PACK;
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
         /* timer end */
         gettimeofday(&time_end, NULL);
         cost_time = (time_end.tv_sec - time_start.tv_sec) + (time_end.tv_usec - time_start.tv_usec) / 1000000.0;
-        fprintf(stderr, "time: %.2lfs\n", cost_time);
+        fprintf(stderr, "encode done in %.2lfsec\n", cost_time);
     }
 
     if(operation == OPERATION_INVALID) { /* bad operation */
