@@ -17,13 +17,6 @@ Implementation Details
 
     Since the highest order of PPM model is order-4, I use an order 8-4-2 LZP coder to reduce redundancy of higher orders. For simple implementation and faster encoding, I use escape character instead of flags to indicate literals and matches. All LZP outputs are passed to the PPM model. With LZP coding, slimox's compression ratio is closed to an order-5 PPM model, much better than normal gzip/bzip2 compression.
 
-3. Multithreading
-    Slimox supports a 2-thread architecture. One thread for LZP matching and the other for PPM encoding. Both threads work on small blocks. PPM thread works on current block with LZP matches of current block, and LZP thread works on next block.
-
-4. Dictionary Packing
-
-    Slimox supports packing a directory by traverse recursively into it and collect all files and sub-directories into a list (filename, mode, size). The list is used as the compressed file header. We then pass the list again and compress all regular files.
-
 ------
 
 Benchmark
@@ -41,7 +34,7 @@ Here is a simple benchmark with __bible.txt__, compared with gzip and bzip2.
 Build
 =====
 
-You can simply use `make` to automatically build the whole project. You can also compile each .c source with `gcc -msse2 -O3 -lpthread`.
+You can simply use `make` to automatically build the whole project. You can also compile each .c source with `gcc -msse2 -O3`.
 
 Run
 ===
