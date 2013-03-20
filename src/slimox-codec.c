@@ -216,6 +216,7 @@ int slimox_decode(buf_t* ib, buf_t* ob, ppm_model_t* ppm) {
                 for(i = 0; i < match_len; i++) {
                     buf_append(ob, ob->m_data[match_pos + i]);
                 }
+                ppm->m_sse_last_esc = 0;
             }
         }
         while(match_len > 0) { /* update context */
