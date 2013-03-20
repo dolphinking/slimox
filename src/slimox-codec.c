@@ -135,6 +135,7 @@ int slimox_encode(buf_t* ib, buf_t* ob, ppm_model_t* ppm, FILE* fout_sync) {
             ppm->m_context <<= 8;
             ppm->m_context |= escape;
             ppm_encode(ppm, &coder, match_len, ;; buf_append(ob, output));
+            ppm->m_sse_last_esc = 0;
 
         } else { /* encode a literal */
             ppm_encode(ppm, &coder, ib->m_data[pos], ;; buf_append(ob, output));
