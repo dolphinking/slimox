@@ -421,8 +421,8 @@ int unpack(const char* infile, const char* path, ppm_model_t* ppm, int block_siz
                 item->m_size -= ob_write_size;
                 ob_offset += ob_write_size;
             }
-            fchmod(fileno(fout), item->m_mode);
             fclose(fout);
+            chmod(file_path->str, item->m_mode);
         }
     }
 
